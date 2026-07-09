@@ -8,6 +8,14 @@
 
 **Input**: User description: "para transcribes audio and video files to text, running entirely on the user's machine. A user has an audio or video file (a recording, a voice memo, a downloaded clip) and wants a text transcript. They run para, pointing it at the file or piping the file's contents in, and get plain text back, either printed out or written to a file. The tool must: accept common audio and video formats without the user needing to convert anything first; work without an internet connection, once initial setup is done; produce output usable in three ways: as plain readable text, as structured data with timing information, and as subtitle files; let the user choose between a few different transcription models, trading off speed against accuracy; behave predictably in scripts and pipelines — clean success or clear failure, nothing in between. Out of scope for this version: real-time transcription, identifying different speakers, any kind of graphical interface."
 
+## Clarifications
+
+### Session 2026-07-09
+
+- Q: Is explicit model management (listing, pre-downloading, removing cached models) part of this feature's scope? → A: Listing available/cached models is in scope. Forcing a fresh re-download of a model (discarding and re-fetching its cached copy, e.g. to repair a bad cache) is in scope. A standalone "remove a cached model" command is not in scope.
+- Q: When a user selects a model that isn't cached yet and the required download can't complete (no network, interrupted, unreachable server), what must happen? → A: The system retries the download a bounded number of times with backoff; regardless of retries, the end state is always a clear, specific error and a non-zero exit — never a silent fallback to a different model, and never a partially-downloaded model left in the cache.
+- Q: Must para emit progress indication to stderr during a long transcription run? → A: Required only when the input is long enough to need chunked processing (above the single-pass processing threshold) — a minimal per-chunk signal such as "transcribing chunk N of M" is sufficient; no percentage or progress bar is required. Inputs short enough to transcribe in a single pass need no interim progress output.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Get a plain-text transcript from a file (Priority: P1)
@@ -132,6 +140,10 @@ loads correctly in a common video player.
   (e.g., no disk space, no write permission)?
 - What happens when the input recording is unusually long (e.g., several
   hours)?
+- What happens when a model is not yet cached and its download cannot
+  complete (no network, connection drops mid-download, server unreachable)?
+- What happens when an input is long enough that it must be processed in
+  multiple chunks rather than a single pass?
 
 ## Requirements *(mandatory)*
 
@@ -181,6 +193,24 @@ loads correctly in a common video player.
   multiple speakers within a recording.
 - **FR-018**: System MUST NOT provide a graphical user interface; all
   interaction is via command invocation.
+- **FR-019**: Users MUST be able to list the available model options and
+  see which of them are already cached locally.
+- **FR-020**: Users MUST be able to force a fresh re-download of a given
+  model's cached files (discarding and re-fetching them), for cases such as
+  repairing a corrupted local cache.
+- **FR-021**: System MUST NOT provide a standalone command whose only
+  purpose is to remove a cached model without also re-fetching it.
+- **FR-022**: When a required model is not yet cached and its download
+  cannot complete, System MUST retry a bounded number of times with
+  backoff, then fail with a clear, specific error and a non-zero exit if
+  all attempts are exhausted. System MUST NOT silently fall back to a
+  different model, and MUST NOT leave a partially-downloaded model in the
+  cache.
+- **FR-023**: When an input is long enough to require chunked processing
+  (above the single-pass processing threshold), System MUST emit a minimal
+  per-chunk progress signal (e.g., "transcribing chunk N of M") to stderr
+  as each chunk completes. Inputs short enough for a single pass are NOT
+  required to produce any interim progress output.
 
 ### Key Entities
 
@@ -190,9 +220,10 @@ loads correctly in a common video player.
 - **Transcript**: The textual result of transcription; composed of the full
   text and, when timed output is requested, an ordered list of segments
   each with a start time, end time, and text.
-- **Model Option**: One of the selectable transcription models; has a name
-  and a relative position on the speed/accuracy tradeoff that the user can
-  choose between.
+- **Model Option**: One of the selectable transcription models; has a name,
+  a relative position on the speed/accuracy tradeoff, and a local cache
+  state (not yet downloaded / cached) that the user can inspect and force
+  to refresh.
 - **Output Artifact**: The file or stream produced by a run; has a form
   (plain text, structured timed data, or subtitles) and a destination
   (standard output or a file).
