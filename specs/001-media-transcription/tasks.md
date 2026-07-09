@@ -1,0 +1,245 @@
+---
+
+description: "Task list for Local Audio & Video Transcription"
+---
+
+# Tasks: Local Audio & Video Transcription
+
+**Input**: Design documents from `/specs/001-media-transcription/`
+**Prerequisites**: plan.md, spec.md, data-model.md, contracts/, research.md, quickstart.md (all present)
+
+**Tests**: Included — Constitution Engineering Standards mandate "every error path has a test," and plan.md's Constitution Check ties several PASS verdicts directly to contract tests existing.
+
+**Organization**: Tasks are grouped by user story (spec.md priorities P1–P4) to enable independent implementation and testing of each story.
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel (different files, no dependency on an incomplete task)
+- **[Story]**: Maps to spec.md user stories (US1–US4)
+- File paths are exact and match plan.md's Project Structure
+
+## Path Conventions
+
+Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — no frontend/backend split applies).
+
+---
+
+## Phase 1: Setup (Shared Infrastructure)
+
+**Purpose**: Project initialization
+
+- [ ] T001 Create the project structure per plan.md's Project Structure section: `Cargo.toml`, `src/main.rs`, `src/audio.rs`, `src/model/{mod.rs,registry.rs,manager.rs}`, `src/inference/{mod.rs,engine.rs,mel.rs,decoder.rs}`, `src/output/{mod.rs,text.rs,json.rs,srt.rs}`, `tests/contract/`, `tests/integration.rs`
+- [ ] T002 Add dependencies to `Cargo.toml`: `clap` (derive, env), `ort`, `rustfft`, `ndarray`, `tokenizers` (default features — no `onig`, per research.md §4), `reqwest` (blocking, stream), `indicatif`, `serde`/`serde_json`, `anyhow`, `thiserror`, `tempfile`, `which`, `dirs`. Resolve real current versions via `cargo add` for each — do not guess or hardcode a version number that hasn't been confirmed to resolve.
+- [ ] T003 Configure `Cargo.toml`'s `[profile.release]` (lto, codegen-units) and the `integration` test feature flag; add a `Makefile` with `build`, `release`, `release-all`, `test`, `integration`, `lint`, `clean` targets per plan.md (cross-compilation caveat documented in README, not baked into the Makefile — research.md §9)
+
+**Checkpoint**: `cargo build` succeeds with an empty skeleton before any foundational logic is added.
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
+
+**⚠️ CRITICAL**: No user story work can begin until this phase is complete
+
+- [ ] T004 [P] Define shared types per data-model.md — `Transcript`, `Segment`, `OutputFormat`, `Device`, `ModelKind` — in `src/inference/mod.rs` and `src/output/mod.rs`
+- [ ] T005 [P] Implement the `Cli` derive struct (`-i/--input`, `-o/--output`, `-m/--model`, `-f/--format`, `--device`, `--cache-dir`, `--list-models`, `--refresh-model`, env var overrides) in `src/main.rs` per contracts/cli-interface.md
+- [ ] T006 Implement the top-level error boundary in `src/main.rs`: `main()` calls `run() -> anyhow::Result<()>`, converts any `Err` to `eprintln!("error: {e:#}")` + `std::process::exit(1)`; detect stdin-is-a-TTY-with-no-input and exit 1 with a usage error (FR-002) (depends on: T005)
+- [ ] T007 [P] Implement ffmpeg discovery (`which::which("ffmpeg")`) with a specific "ffmpeg not found" error in `src/audio.rs`
+- [ ] T008 Implement audio transcoding to 16 kHz mono 16-bit PCM WAV via an ffmpeg subprocess, plus probing for duration and audio-track presence, in `src/audio.rs` (FR-001, FR-003, FR-015) (depends on: T007)
+- [ ] T009 Implement stdin staging via `tempfile::NamedTempFile` and magic-byte format detection (WAV/MP3/M4A/MKV/FLAC/OGG, diagnostics only) in `src/audio.rs` (FR-002) (depends on: T008)
+- [ ] T010 [P] Define the static model registry (≥3 models: `parakeet-tdt-0.6b-v3` default TDT + at least two CTC alternates) in `src/model/registry.rs`. Download each model's real files first and compute actual SHA256 checksums — never placeholder them (Constitution Principle V; research.md §3)
+- [ ] T011 Implement model cache path resolution (`--cache-dir`/`PARA_CACHE_DIR`/`dirs::cache_dir()` default) and cache-state checking (`NotCached`/`Cached` via file existence + checksum match) in `src/model/manager.rs` (depends on: T010)
+- [ ] T012 Implement model download with stderr-only progress (`indicatif`), atomic `.tmp`-then-rename on success, stale-`.tmp` cleanup on startup, and a `download.lock` guard file in `src/model/manager.rs` (depends on: T011)
+- [ ] T013 Implement bounded download retry with exponential backoff (3 attempts) in `src/model/manager.rs`; on exhaustion, return a specific `thiserror` error and never fall back to a different cached model (FR-022) (depends on: T012)
+- [ ] T014 Implement `--refresh-model` support (delete cached files, then re-download) as a manager function in `src/model/manager.rs` (FR-020) (depends on: T013)
+- [ ] T015 [P] Implement mel spectrogram extraction in `src/inference/mel.rs` using `rustfft` + `ndarray`. Before implementing, verify the actual parameters (sample rate, window/hop length, FFT size, mel bins, pre-emphasis, mel scale, log floor) against the real NeMo `AudioToMelSpectrogramPreprocessor` config shipped with `parakeet-tdt-0.6b-v3` — do not assume the values noted in research.md §5 are correct as-is
+- [ ] T016 [P] Implement ONNX Runtime session setup with device selection (CoreML default on darwin/aarch64, CPU elsewhere, explicit `--device` override) and the CoreML first-compile stderr notice in `src/inference/engine.rs`. Verify the exact `ort` crate API (execution-provider construction, module path) against the version resolved in T002's docs.rs page before writing — do not transcribe the 1.x-style sample from the prior draft spec (research.md §1)
+- [ ] T017 Implement chunked-encoding support for long inputs in `src/inference/engine.rs`, including the per-chunk `"transcribing chunk N of M"` stderr message (FR-023). Determine the actual chunk-length threshold empirically against the loaded encoder rather than hardcoding a guessed value (research.md §6) (depends on: T016)
+- [ ] T018 Implement tokenizer loading (`tokenizers::Tokenizer::from_file`) as part of model resource loading in `src/inference/engine.rs` (depends on: T017)
+
+**Checkpoint**: Foundation ready — audio in, model acquired and cached, ONNX session buildable, mel extraction ready. No transcript can be produced yet (no decoder, no output formatter) — that's what the user story phases add.
+
+---
+
+## Phase 3: User Story 1 - Get a plain-text transcript from a file (Priority: P1) 🎯 MVP
+
+**Goal**: Point para at a file (or pipe bytes in) and get a plain-text transcript, printed or written to a file, with no manual conversion step.
+
+**Independent Test**: Run para against a sample audio file and a sample video file in different common formats; confirm a readable transcript from each with no prior manual conversion, and that output can be redirected to a file or piped in via stdin.
+
+### Tests for User Story 1
+
+- [ ] T019 [P] [US1] Contract test: `--format text` (default) writes only the transcript to stdout, nothing else, in `tests/contract/test_stdout_contract.rs`
+- [ ] T020 [P] [US1] Contract test: ffmpeg-missing, input-not-found, no-audio-track, and empty/corrupted-file all exit non-zero with a specific stderr message and empty stdout, in `tests/contract/test_error_paths.rs`
+- [ ] T021 [P] [US1] Integration test (feature = `integration`): end-to-end text transcription against a cached fixture model produces a non-empty transcript, in `tests/integration.rs`
+
+### Implementation for User Story 1
+
+- [ ] T022 [P] [US1] Implement the TDT greedy decoder (token+duration decode loop, segment collection) in `src/inference/decoder.rs`. Read actual tensor names/shapes from the real downloaded ONNX files before hardcoding any (research.md §3)
+- [ ] T023 [P] [US1] Implement the plain-text output formatter (`transcript.text` + trailing newline, nothing else) in `src/output/text.rs`
+- [ ] T024 [US1] Wire `run()` in `src/main.rs`: resolve input (file path or staged stdin) → transcode via `audio.rs` → ensure the default model is cached via `manager.rs` → build an ONNX session via `engine.rs` → `mel.rs` → `decoder.rs` (TDT) → `text.rs` → write to stdout or the `-o` file (FR-004, FR-011) (depends on: T022, T023)
+- [ ] T025 [US1] Add the specific stderr error messages for each FR-015 rejection case (unsupported/corrupted/no-audio input) in `src/main.rs`, matching contracts/cli-interface.md's error table (depends on: T024)
+
+**Checkpoint**: At this point, User Story 1 is fully functional and independently testable — this is the MVP.
+
+---
+
+## Phase 4: User Story 2 - Choose a model to balance speed and accuracy (Priority: P2)
+
+**Goal**: Let the user pick from ≥3 models trading speed for accuracy, with a sensible default, a listing view, and a forced-refresh option.
+
+**Independent Test**: Run the same input through each model option; confirm each completes, the fastest option is measurably quicker than the most accurate, `--list-models` shows every option's cache state, and an invalid `--model` value fails immediately with a valid-options list.
+
+### Tests for User Story 2
+
+- [ ] T026 [P] [US2] Contract test: an unrecognized `--model` value exits non-zero, lists valid IDs, and attempts no transcription, in `tests/contract/test_model_unknown.rs`
+- [ ] T027 [P] [US2] Contract test: `--list-models` lists every registered model with cache state and marks exactly one default, in `tests/contract/test_list_models.rs`
+- [ ] T028 [P] [US2] Contract test: selecting a specific model actually uses that model (echoed in output/status), never silently substituted, in `tests/contract/test_model_selection.rs`
+
+### Implementation for User Story 2
+
+- [ ] T029 [US2] Implement the CTC greedy decoder (argmax + collapse-repeats + remove-blanks, single whole-file segment) in `src/inference/decoder.rs`. Verify actual tensor names from the real CTC ONNX files before hardcoding (research.md §3) (depends on: T022)
+- [ ] T030 [US2] Wire `--model` flag validation against the registry (unknown ID → error + valid-options list, FR-010) in `src/main.rs` (depends on: T024, T029)
+- [ ] T031 [US2] Implement the `--list-models` command output (id, description including language/timing-granularity per data-model.md's `ModelOption`, cache state, default marker), exiting 0 without transcribing (FR-019) (depends on: T030)
+- [ ] T032 [US2] Wire `--refresh-model` to the manager's refresh function from T014, in `src/main.rs` (FR-020) (depends on: T031)
+
+**Checkpoint**: User Stories 1 AND 2 both work independently.
+
+---
+
+## Phase 5: User Story 3 - Get timed, structured output for further processing (Priority: P3)
+
+**Goal**: Produce the transcript as machine-parseable JSON with segment-level start/end timestamps.
+
+**Independent Test**: Run para requesting structured timed output; confirm the result validates against contracts/output-json-schema.json and every segment has `end > start`.
+
+### Tests for User Story 3
+
+- [ ] T033 [P] [US3] Contract test: `--format json` output validates against `contracts/output-json-schema.json`, and every segment has `end > start`, in `tests/contract/test_json_output.rs`
+- [ ] T034 [P] [US3] Integration test (feature = `integration`): end-to-end JSON transcription; deserialize and confirm `text`/`segments`/`model`/`duration_seconds` are present, in `tests/integration.rs`
+
+### Implementation for User Story 3
+
+- [ ] T035 [P] [US3] Implement the JSON output formatter (`serde_json`, seconds rounded to 2 decimal places) in `src/output/json.rs` per contracts/output-json-schema.json
+- [ ] T036 [US3] Wire the `--format json` dispatch in `src/main.rs` (depends on: T035)
+
+**Checkpoint**: User Stories 1, 2, AND 3 all work independently.
+
+---
+
+## Phase 6: User Story 4 - Get a subtitle file for a video (Priority: P4)
+
+**Goal**: Produce a subtitle file with correctly ordered, non-overlapping timed captions usable by common video players.
+
+**Independent Test**: Run para against a sample video requesting subtitle output; confirm the result loads correctly and matches the SRT contract (comma-separated milliseconds, sequential block numbers).
+
+### Tests for User Story 4
+
+- [ ] T037 [P] [US4] Contract test: SRT block numbering, comma millisecond separator, blank-line spacing, and the single-segment CTC-model fallback, in `tests/contract/test_srt_output.rs`
+- [ ] T038 [P] [US4] Integration test (feature = `integration`): end-to-end SRT transcription; verify `-->` and the comma separator are present, in `tests/integration.rs`
+
+### Implementation for User Story 4
+
+- [ ] T039 [P] [US4] Implement the `fmt_srt_time` helper and SRT output formatter in `src/output/srt.rs` per contracts/output-srt.md
+- [ ] T040 [US4] Wire the `--format srt` dispatch in `src/main.rs` (depends on: T039)
+
+**Checkpoint**: All four user stories are independently functional.
+
+---
+
+## Phase 7: Polish & Cross-Cutting Concerns
+
+**Purpose**: Documentation and final verification across all stories
+
+- [ ] T041 [P] Write `README.md` per plan.md's README requirements: prerequisites, build, first-run behavior (model download progress, CoreML compile notice), all flags with examples, model IDs and when to use each, `PARA_CACHE_DIR`, language support notes, the ONNX Runtime build-time-fetch note plus `ORT_DYLIB_PATH` escape hatch, and the cross-compilation-tooling caveat (research.md §9)
+- [ ] T042 [P] Run `cargo clippy -- -D warnings` and `cargo fmt --check`; fix any findings
+- [ ] T043 Run every scenario in quickstart.md end-to-end against a real release build (all four user stories, offline operation, pipeline safety, `--refresh-model`)
+- [ ] T044 [P] Add inline `#[cfg(test)]` unit tests for output-formatter edge cases not already covered by contract tests (e.g., `fmt_srt_time(3661.5) == "01:01:01,500"`, CTC single-segment SRT block) in `src/output/srt.rs` and `src/output/json.rs`
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies
+
+- **Setup (Phase 1)**: No dependencies — start immediately
+- **Foundational (Phase 2)**: Depends on Setup — BLOCKS all user stories
+- **User Story 1 (Phase 3)**: Depends on Foundational only — this is the MVP
+- **User Story 2 (Phase 4)**: Depends on Foundational; T029 also depends on US1's T022 (both extend `decoder.rs`)
+- **User Story 3 (Phase 5)**: Depends on Foundational; independent of US2, only needs a `Transcript` with `segments` (produced by either decoder from US1/US2)
+- **User Story 4 (Phase 6)**: Depends on Foundational; independent of US2/US3
+- **Polish (Phase 7)**: Depends on all four user stories being complete
+
+### Within Each Phase
+
+- Tests are written before their corresponding implementation tasks and MUST fail first
+- `src/model/manager.rs` tasks (T011→T014) are strictly sequential (same file, each builds on the last)
+- `src/inference/engine.rs` tasks (T016→T018) are strictly sequential (same file)
+- `src/main.rs` wiring tasks within a story are strictly sequential (same file)
+
+### Parallel Opportunities
+
+- Setup: none (T002/T003 both edit `Cargo.toml` sequentially)
+- Foundational: T004, T005, T007, T010, T015, T016 can start in parallel (five independent files); their sequential follow-ons (T006, T008→T009, T011→T014, T017→T018) proceed once each starting task lands
+- US1: T019, T020, T021 (tests) in parallel; T022, T023 (decoder vs. text formatter) in parallel
+- US2: T026, T027, T028 (tests, three separate files) in parallel
+- US3: T033, T034 in parallel; T035 has no same-phase counterpart to parallelize with
+- US4: T037, T038 in parallel; T039 has no same-phase counterpart to parallelize with
+- Polish: T041, T042, T044 in parallel; T043 runs last, after everything else
+
+## Parallel Example: Foundational Phase
+
+```bash
+Task: "Define shared types in src/inference/mod.rs and src/output/mod.rs"          # T004
+Task: "Implement the Cli derive struct in src/main.rs"                             # T005
+Task: "Implement ffmpeg discovery in src/audio.rs"                                 # T007
+Task: "Define the static model registry in src/model/registry.rs"                 # T010
+Task: "Implement mel spectrogram extraction in src/inference/mel.rs"              # T015
+Task: "Implement ONNX Runtime session setup in src/inference/engine.rs"           # T016
+```
+
+## Parallel Example: User Story 1
+
+```bash
+Task: "Contract test: stdout-only-transcript in tests/contract/test_stdout_contract.rs"   # T019
+Task: "Contract test: error paths in tests/contract/test_error_paths.rs"                  # T020
+Task: "Integration test: end-to-end text in tests/integration.rs"                         # T021
+Task: "Implement TDT decoder in src/inference/decoder.rs"                                 # T022
+Task: "Implement text formatter in src/output/text.rs"                                    # T023
+```
+
+---
+
+## Implementation Strategy
+
+### MVP First (User Story 1 Only)
+
+1. Complete Phase 1: Setup
+2. Complete Phase 2: Foundational (CRITICAL — blocks everything)
+3. Complete Phase 3: User Story 1
+4. **STOP and VALIDATE**: run quickstart.md's US1 section against a real build
+5. This is a shippable MVP: `para -i file.wav` → plain-text transcript, offline-capable, fail-loud
+
+### Incremental Delivery
+
+1. Setup + Foundational → nothing user-visible yet, but the substrate is real and tested
+2. + User Story 1 → MVP: plain-text transcription (deploy/demo)
+3. + User Story 2 → model choice, listing, refresh (deploy/demo)
+4. + User Story 3 → structured JSON output (deploy/demo)
+5. + User Story 4 → subtitle output (deploy/demo)
+6. + Polish → README, lint-clean, full quickstart pass
+
+### Team Strategy
+
+Once Foundational is done, US2/US3/US4 can be split across contributors — US3 and US4 only need a `Transcript` with `segments`, which US1's T022 (TDT decoder) already produces; they don't need to wait on US2's CTC decoder work. Only T029 (CTC decoder) has a real cross-story dependency, on T022.
+
+---
+
+## Notes
+
+- [P] tasks = different files, no dependency on an incomplete task
+- [Story] label maps each task to its user story for traceability
+- Every FR-0xx / SC-00x reference above ties a task back to spec.md; every research.md §N reference flags a place where a plan-time decision was deliberately left open for implementation-time verification (Constitution Principle V) — do not silently fill in a guessed value where one of these references appears
+- Commit after each task or logical group
+- Stop at any checkpoint to validate a story independently
