@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://para.local/schemas/transcript-output.json",
+  "title": "para structured transcript output (--format json)",
+  "description": "Contract for FR-005: transcript broken into timed segments as machine-parseable structured data.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["text", "segments", "model", "duration_seconds"],
+  "properties": {
+    "text": {
+      "type": "string",
+      "description": "Full plain-text transcript, identical in content to --format text output."
+    },
+    "segments": {
+      "type": "array",
+      "description": "Ordered, non-overlapping timed segments (FR-005). A single-segment array is valid for whole-file-timing (CTC-tier) models.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["start", "end", "text"],
+        "properties": {
+          "start": { "type": "number", "minimum": 0, "description": "Seconds, 2 decimal places." },
+          "end": { "type": "number", "minimum": 0, "description": "Seconds, 2 decimal places. Must be > start." },
+          "text": { "type": "string" }
+        }
+      }
+    },
+    "model": {
+      "type": "string",
+      "description": "The model ID actually used for this run (FR-010) — never a silently substituted value."
+    },
+    "duration_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total input duration in seconds."
+    }
+  }
+}
