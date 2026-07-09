@@ -1,0 +1,7 @@
+[pytest]
+addopts = ["-vvl", "--numprocesses=auto"]
+python_files = ["*_test.py"]
+testpaths = [
+  "tests",
+]
+asyncio_mode = "auto"

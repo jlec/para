@@ -1,0 +1,14 @@
+.ansible
+.pytest_cache
+.ruff_cache
+.terraform
+.venv
+CHANGELOG.md
+charts/README.md
+charts/templates
+common/.ansible
+data
+deployment/.terragrunt
+deployment/base/README.md
+deployment/README.md
+deployment/Taskfile.yml

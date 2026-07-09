@@ -1,0 +1,48 @@
+{
+  "template": "http://github.com/jlec/cookiecutter-general",
+  "commit": "0114a0ad5c937269204d61ebde35cc1261aaa92c",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "email": "justin@jlec.de",
+      "full_name": "Justin Lecher",
+      "github_owner": "jlec",
+      "github_repo": "para",
+      "project_name": "Parakeet STT cli",
+      "project_short_description": "Parakeet STT cli",
+      "project_slug": "para",
+      "project_support_ansible": false,
+      "project_support_ansible_collection": false,
+      "project_support_ansible_playbook": false,
+      "project_support_ansible_role": false,
+      "project_support_docker": false,
+      "project_support_golang": false,
+      "project_support_rust": true,
+      "project_support_rust_bin": true,
+      "project_support_rust_lib": false,
+      "project_support_kubernetes": false,
+      "project_support_packer": false,
+      "project_support_python": false,
+      "project_support_python_app": false,
+      "project_support_python_script": false,
+      "project_support_python_ai": false,
+      "project_support_python_ds": false,
+      "project_support_js": false,
+      "project_support_terraform": false,
+      "project_support_terraform_module": false,
+      "project_support_terraform_provider": false,
+      "project_support_terraform_terragrunt": false,
+      "go_version": "1.26",
+      "python_version": "3.14",
+      "scalr_env": "jlec",
+      "scalr_workspace": "para",
+      "_copy_without_render": [
+        "charts/README.md.gotmpl"
+      ],
+      "_go_app_name": "goer",
+      "_template": "http://github.com/jlec/cookiecutter-general",
+      "_commit": "0114a0ad5c937269204d61ebde35cc1261aaa92c"
+    }
+  },
+  "directory": null
+}

@@ -1,0 +1,12 @@
+[package]
+name = "para"
+version = "0.1.0"
+edition = "2024"
+description = "Parakeet STT cli"
+repository = "https://github.com/jlec/para"
+license = "Apache-2.0"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

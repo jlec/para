@@ -1,0 +1,180 @@
+---
+# https://taskfile.dev
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: "3"
+
+env:
+  PY_PM: uv
+  PY_RUNNER: uv run
+
+tasks:
+  default:
+    cmds:
+      - cmd: task -l
+
+  #############################################################################
+  #
+  # Environment Setup
+  #
+  #############################################################################
+  setup:
+    desc: Setup environment
+    cmds:
+      - task: setup-python
+      - task: setup-prek
+      - cmd: rm -vf .git/hooks/*legacy
+
+  setup-python:
+    desc: Setup Python environment including dev dependencies
+    cmds:
+      - cmd: $PY_PM sync --upgrade --dev
+
+  setup-prek:
+    desc: Setup prek environment
+    cmds:
+      - cmd: prek install
+      - cmd: prek install --install-hooks
+      - cmd: prek install --hook-type commit-msg
+      - cmd: prek install --hook-type pre-push
+      - task: ansible-init
+
+  ansible-init:
+    desc: Setup ansible
+    cmds:
+      - cmd: echo "No Ansible support"
+  #############################################################################
+  #
+  # Release management
+  #
+  #############################################################################
+  release:
+    desc: Release MINOR version bump
+    cmds:
+      - cmd: $PY_RUNNER cz bump --check-consistency --increment MINOR --no-verify
+
+  release-major:
+    desc: Release MAJOR version bump
+    cmds:
+      - cmd: $PY_RUNNER cz bump --check-consistency --increment MAJOR --no-verify
+
+  release-patch:
+    desc: Release PATCH version bump
+    cmds:
+      - cmd: $PY_RUNNER cz bump --check-consistency --increment PATCH --no-verify
+
+  publish:
+    desc: Push to remote
+    cmds:
+      - cmd: git push -v --progress
+      - cmd: git push -v --progress --tags
+
+  #############################################################################
+  #
+  # Cookies options
+  #
+  #############################################################################
+  cruft-update:
+    desc: Update the cookies
+    cmds:
+      - cmd: git stash push -m cruft-update
+      - cmd: $PY_RUNNER cruft update --allow-untracked-files --skip-apply-ask
+      - cmd: if test -d control; then pushd control >/dev/null && task init && popd; fi
+      - cmd: if test -d deployment; then pushd deployment >/dev/null && task init && popd; fi
+      - task: prettier
+      - cmd: git stash list | grep -q cruft-update && git stash pop >/dev/null || true
+
+  cruft-push:
+    desc: Push the cookies
+    cmds:
+      - cmd: "git ci -a -m \"chore(cruft): update to latest cruft state\""
+
+  cruft-reset:
+    desc: Reset cruft
+    cmds:
+      - cmd: cruft diff | git apply
+
+  #############################################################################
+  #
+  # Checking and Linting
+  #
+  #############################################################################
+  prettier:
+    desc: Run prettier
+    cmds:
+      - cmd: prettier -w .
+      - cmd: yamlfmt .
+      - cmd: biome format --fix .
+  check:
+    desc: Run prek
+    deps:
+      - lint
+  lint:
+    desc: Run prek
+    deps:
+      - linting
+  linting:
+    desc: Run prek
+    cmds:
+      - task: prek
+
+  prek:
+    desc: Run prek
+    cmds:
+      - cmd: prek run --stage pre-commit --all-files
+      - cmd: prek run --stage pre-push --all-files
+      - cmd: prek run --stage manual --all-files
+
+  test:
+    desc: Run pytest
+    deps:
+      - pytest
+
+  pytest:
+    desc: Run pytest
+    cmds:
+      - cmd: $PY_RUNNER pytest
+  #############################################################################
+  #
+  # Rust Build Tasks
+  #
+  #############################################################################
+  rust:build:
+    desc: "Build Rust binaries (release mode)"
+    dir: rust
+    cmds:
+      - cmd: cargo build --release
+
+  rust:test:
+    desc: "Run Rust tests"
+    dir: rust
+    cmds:
+      - cmd: cargo test
+
+  rust:clippy:
+    desc: "Run Rust clippy with strict warnings"
+    dir: rust
+    cmds:
+      - cmd: cargo clippy -- -D warnings
+
+  #############################################################################
+  #
+  # AI & IDE options
+  #
+  #############################################################################
+  beads:setup:
+    desc: Setup BEADS
+    cmds:
+      - cmd: bd init --role maintainer
+      - cmd: bd setup claude
+
+  #############################################################################
+  #
+  # Custom options
+  #
+  #############################################################################
+  clean:
+    desc: Clean up
+    cmds:
+      - cmd: rm -rf dist
+      - cmd: rm -rf tmp
+      - cmd: git clean -fdx

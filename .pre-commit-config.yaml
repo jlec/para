@@ -1,0 +1,140 @@
+---
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+default_language_version:
+  python: python3.14
+default_stages: [pre-commit]
+exclude: >
+  (?x)^(
+  .ansible|
+  .beads|
+  .cache|
+  .gitignore|
+  .pytest_cache|
+  .ruff_cache|
+  .terraform|
+  .venv|
+  .vscode/launch.json|
+  common/.ansible|
+  data|
+  tmp
+  )
+repos:
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: "v4.16.3"
+    hooks:
+      - id: commitizen
+        stages:
+          - commit-msg
+  - repo: https://github.com/biomejs/pre-commit
+    rev: v0.6.1
+    hooks:
+      - id: biome-check
+      - id: biome-ci
+      - id: biome-format
+      - id: biome-lint
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: "v6.0.0"
+    hooks:
+      - id: check-added-large-files
+      - id: check-ast
+      - id: check-builtin-literals
+      - id: check-case-conflict
+      - id: check-docstring-first
+      - id: check-executables-have-shebangs
+      - id: check-json
+      - id: check-shebang-scripts-are-executable
+      # - id: pretty-format-json
+      #   args: ["--autofix"]
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-vcs-permalinks
+      - id: check-xml
+      - id: check-yaml
+      - id: debug-statements
+      - id: destroyed-symlinks
+      - id: detect-aws-credentials
+        args: ["--allow-missing-credentials"]
+      - id: detect-private-key
+      # - id: double-quote-string-fixer
+      - id: end-of-file-fixer
+        exclude: "charts/README.md"
+      - id: file-contents-sorter
+      - id: fix-byte-order-marker
+      - id: forbid-new-submodules
+      - id: mixed-line-ending
+      - id: name-tests-test
+      # - id: no-commit-to-branch
+      - id: requirements-txt-fixer
+      - id: sort-simple-yaml
+      - id: trailing-whitespace
+  - repo: https://github.com/google/yamlfmt
+    rev: "v0.21.0"
+    hooks:
+      - id: yamlfmt
+  - repo: https://github.com/adrienverge/yamllint
+    rev: "v1.38.0"
+    hooks:
+      - id: yamllint
+  # - repo: https://github.com/jumanjihouse/pre-commit-hooks
+  #   rev: 3.0.0
+  - repo: https://github.com/jlec/pre-commit-hooks
+    rev: "v3.0.1"
+    hooks:
+      # - id: bundler-audit
+      - id: check-mailmap
+      # - id: fasterer
+      - id: forbid-binary
+        exclude: "docs/images/.*"
+      # - id: forbid-space-in-indent
+      # - id: git-check
+      # - id: git-dirty
+      # - id: markdownlint
+      # - id: protect-first-parent
+      # - id: reek
+      # - id: require-ascii
+      # - id: rubocop
+      - id: shellcheck
+      # - id: script-must-have-extension
+      # - id: script-must-not-have-extension
+      - id: shfmt
+  - repo: https://github.com/tombi-toml/tombi-pre-commit
+    rev: "v1.1.1"
+    hooks:
+      - id: tombi-format
+      - id: tombi-lint
+  - repo: https://github.com/betterleaks/betterleaks
+    rev: "v1.4.0"
+    hooks:
+      - id: betterleaks
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: "0.37.2"
+    hooks:
+      - id: check-github-workflows
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: fmt
+      - id: cargo-check
+      - id: clippy
+        args: ["--", "-D", "warnings"]
+  - repo: https://github.com/EmbarkStudios/cargo-deny
+    rev: "0.19.8"
+    hooks:
+      - id: cargo-deny
+        args: ["check"]
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.14.0
+    hooks:
+      - id: hadolint-docker
+  - repo: https://github.com/gitguardian/ggshield
+    rev: "v1.51.0"
+    hooks:
+      - id: ggshield
+        stages: ["pre-push"]
+  - repo: https://github.com/jlec/pre-commit-cruft
+    rev: "v0.1.2"
+    hooks:
+      - id: cruft
+        stages: ["pre-push"]
