@@ -31,11 +31,12 @@ the resolved `libonnxruntime.dylib`/`.so` alongside the `para` binary in release
 **Rationale**: This is a correction to the prior spec, not a carry-forward. The prior spec assumed
 `download-binaries` + `copy-dylibs` yields something close to a single static binary; verified
 against `ort`'s own docs (`ort.pyke.io/setup/linking`, via search) this is not quite right:
+
 - Static linking is only available where the execution provider itself supports a static build;
   prebuilt CoreML-capable ONNX Runtime binaries are distributed as shared libraries, not static
   archives.
 - `copy-dylibs` copies the shared library into the Cargo target/`OUT_DIR` so `cargo build`/`cargo
-  run` work out of the box for a developer building from source — it does not fuse the dylib into
+run` work out of the box for a developer building from source — it does not fuse the dylib into
   the executable. The docs explicitly recommend `load-dynamic` + `ORT_DYLIB_PATH` for anyone
   distributing a binary, precisely because it makes the dependency on a co-located shared library
   explicit and controllable instead of relying on target-folder side effects.
@@ -118,10 +119,10 @@ against the real crate manifest. Do not pass `default-features = false`.
 **Correction**: The original version of this section (written during planning, before any real
 build was attempted) claimed `onig` was an opt-in, not-recommended feature and planned to drop it
 via `default-features = false, features = ["onig"]` — inverted from what was intended (that
-line would have *kept* onig while dropping `progressbar`/`esaxx_fast`, the opposite of the stated
+line would have _kept_ onig while dropping `progressbar`/`esaxx_fast`, the opposite of the stated
 goal). Worse, the underlying premise was wrong: inspecting `tokenizers` 0.23.1's actual
 `Cargo.toml` (`cargo add` then reading the resolved manifest) shows `onig` is part of `default =
-["progressbar", "onig", "esaxx_fast"]` for *this* crate — the "legacy, not-recommended" finding
+["progressbar", "onig", "esaxx_fast"]` for _this_ crate — the "legacy, not-recommended" finding
 from the original web search was real, but for a different crate (`kitoken`'s `regex-onig`
 feature), not `tokenizers` itself. This is exactly the failure mode Constitution Principle V
 warns about: a plausible-sounding claim that wasn't checked against the actual dependency once it
@@ -136,7 +137,7 @@ That inspection hasn't happened yet — no model has been downloaded. Guessing `
 false` again without that inspection would repeat the same mistake in the opposite direction.
 `cargo build` with full defaults (including `onig`) succeeds in this environment (`onig_sys` builds
 via `cc`/`pkg-config` at compile time — a build-time native-toolchain dependency, not a runtime
-one, so Constitution Principle VII's *runtime*-dependency clause isn't implicated either way).
+one, so Constitution Principle VII's _runtime_-dependency clause isn't implicated either way).
 
 **Alternatives considered**: `default-features = false, features = ["esaxx_fast", "progressbar"]`
 (drop `onig`) — deferred, not rejected: revisit once the real `tokenizer.json` is downloaded (task
@@ -171,7 +172,7 @@ The threshold above which an input requires chunked (multi-pass) encoding must b
 empirically against the actual ONNX encoder's memory/latency behavior during implementation.
 
 **Rationale**: Same principle as §5 — a specific number (e.g., "20 minutes") would be invented
-without empirical grounding. What *is* fixed here, because it's a clarified requirement rather
+without empirical grounding. What _is_ fixed here, because it's a clarified requirement rather
 than a technical constant: whenever chunking is used, para emits `"transcribing chunk N of M"` to
 stderr per chunk (spec.md FR-023), and single-pass inputs must not be forced to chunk just to
 produce progress output.
@@ -182,7 +183,7 @@ produce progress output.
 a specific error and non-zero exit if the final attempt fails. No fallback to a different cached
 model at any point in the retry sequence.
 
-**Rationale**: Spec.md's clarification fixes the *behavior* (bounded retries, then loud failure,
+**Rationale**: Spec.md's clarification fixes the _behavior_ (bounded retries, then loud failure,
 never silent substitution) but leaves the exact bound to implementation. Three attempts with short
 exponential backoff is a conventional default for a CLI tool (long enough to survive a transient
 blip, short enough that a genuinely offline user isn't stuck waiting minutes before getting the
@@ -207,14 +208,14 @@ per function is sufficient and simpler.
 
 **Alternatives considered**: `thiserror` everywhere — rejected as unnecessary ceremony for a
 single-binary (non-library) crate; `anyhow` everywhere including the model manager — rejected
-because the retry loop needs to match on error *kind*, which a type-erased `anyhow::Error` makes
+because the retry loop needs to match on error _kind_, which a type-erased `anyhow::Error` makes
 awkward.
 
 ## 9. Cross-compilation tooling (flagged per explicit request)
 
 **Finding**: Building `linux/amd64` release binaries from a macOS development machine requires a
 cross-linker toolchain (e.g., the `cross` tool + Docker, or an equivalent cross-compilation
-toolchain) that is **not** part of what an end user installs to *run* para — it's a maintainer/CI
+toolchain) that is **not** part of what an end user installs to _run_ para — it's a maintainer/CI
 concern for producing release artifacts, not a runtime dependency covered by Principle VII (which
 is scoped to what "the user must install themselves" to use the tool). It's called out here, and
 must be called out again in the README (this repo drives Rust builds through the existing
@@ -222,11 +223,11 @@ must be called out again in the README (this repo drives Rust builds through the
 present on a contributor's machine. No action needed against Principle VII since it doesn't touch
 the end-user runtime footprint.
 
-**Finding**: The `ort` crate's `download-binaries` feature needs network access at *build* time
+**Finding**: The `ort` crate's `download-binaries` feature needs network access at _build_ time
 (fetching the ORT binary the first time `para` is compiled from source), which is a different
 phase than the runtime network access Constitution Principle II governs. This is normal for a
 Rust project (equivalent to `cargo build` fetching crates.io dependencies) and not a Principle II
-violation, but it does mean an air-gapped *build* environment needs the `ORT_DYLIB_PATH` escape
+violation, but it does mean an air-gapped _build_ environment needs the `ORT_DYLIB_PATH` escape
 hatch (§2) to point at a manually-provided ONNX Runtime library. Document this explicitly in the
 README rather than assuming every build environment has outbound network access.
 
@@ -284,7 +285,7 @@ preprocessor graph are, like the encoder/decoder, explicitly **not** resolved he
 real downloaded `.onnx` file at implementation time (same Principle V discipline as §3).
 
 **Addendum, same day — where the preprocessor graph actually comes from**: Checking each model's
-own HuggingFace repo file listing shows the preprocessor file is *not* reliably present per model:
+own HuggingFace repo file listing shows the preprocessor file is _not_ reliably present per model:
 `parakeet-tdt-0.6b-v3`/`-v2` both bundle `nemo128.onnx`, but `parakeet-ctc-0.6b` bundles no
 preprocessor at all, and no repo in this family bundles the 80-feature preprocessor CTC actually
 needs (`config.json`'s `features_size` field: 128 for both TDT variants, 80 for CTC — read via
@@ -318,14 +319,14 @@ two vendored assets, never entering the download-and-cache flow at all.
 
 ## Summary of changes from the prior technical spec
 
-| Area | Prior spec | Resolved here | Why |
-|---|---|---|---|
-| ORT linking | `download-binaries` + `copy-dylibs` implied near-single-binary | `load-dynamic` + `ORT_DYLIB_PATH`, dylib shipped alongside the binary in releases | `copy-dylibs` is a dev-convenience for `cargo run`, not a distribution strategy; verified against `ort`'s own linking docs |
-| `ort` API code samples | 1.x-style `Environment`/`ExecutionProvider::CoreML(...)` | Re-derive from docs.rs for the pinned version at implementation time | Prior sample is 1.x API; 2.x has moved the execution-provider module at least once across RCs |
-| `tokenizers` features | `default-features = false, features = ["onig"]` | Full defaults kept (`onig` included) — corrected mid-implementation after finding `onig` is actually a *default* feature of this crate, not opt-in as first assumed; dropping it is deferred until the real tokenizer.json's pretokenizer type is inspected | Avoid repeating an unverified claim in the opposite direction (§4) |
-| Model management scope | Implicit only in the narrative goals | Listing + `--refresh-model` explicitly in scope; standalone remove explicitly out of scope | Matches spec.md clarification session, not assumed |
-| Registry size | 4 models (`tdt-v3`, `tdt-v2`, `ctc-0.6b`, `ctc-1.1b`) | 3 models — `tdt-v3`, `tdt-v2`, `ctc-0.6b`; drops the invented `ctc-1.1b` | `ctc-1.1b` doesn't exist on `istupakov`'s HuggingFace profile (verified directly); `tdt-v2` does, so it's kept rather than replaced with a second nonexistent CTC model (§3) |
-| Download failure behavior | Single generic "download failed" error, no retry described | Bounded retries (3, exponential backoff) then loud failure, never a silent model fallback | Matches spec.md FR-022 clarification |
-| Progress reporting | Progress bar (`indicatif`) implied for all downloads; no mention of transcription-time progress | Download progress via `indicatif` (stderr) unchanged; added explicit per-chunk `"transcribing chunk N of M"` stderr output for inputs requiring chunked encoding, none required for single-pass inputs | Matches spec.md FR-023 clarification, which the prior spec predates |
-| Mel spectrogram parameters, tensor names, checksums, chunk threshold | Presented as settled implementation detail | Explicitly deferred to implementation-time verification | Constitution Principle V — must be verified against real sources, not asserted at plan time |
-| Mel extraction & tokenizer approach | Hand-rolled `rustfft` DSP + `tokenizers` crate w/ `tokenizer.json` | Run the model's own bundled preprocessor `.onnx` graph via `ort`; decode via plain `vocab.txt` lookup, no crate | Neither `tokenizer.json` nor a DSP-verification burden actually exists once the real model files were checked (§10) — `rustfft`, `ndarray`, `tokenizers` all removed from Cargo.toml |
+| Area                                                                 | Prior spec                                                                                      | Resolved here                                                                                                                                                                                                                                               | Why                                                                                                                                                                                  |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ORT linking                                                          | `download-binaries` + `copy-dylibs` implied near-single-binary                                  | `load-dynamic` + `ORT_DYLIB_PATH`, dylib shipped alongside the binary in releases                                                                                                                                                                           | `copy-dylibs` is a dev-convenience for `cargo run`, not a distribution strategy; verified against `ort`'s own linking docs                                                           |
+| `ort` API code samples                                               | 1.x-style `Environment`/`ExecutionProvider::CoreML(...)`                                        | Re-derive from docs.rs for the pinned version at implementation time                                                                                                                                                                                        | Prior sample is 1.x API; 2.x has moved the execution-provider module at least once across RCs                                                                                        |
+| `tokenizers` features                                                | `default-features = false, features = ["onig"]`                                                 | Full defaults kept (`onig` included) — corrected mid-implementation after finding `onig` is actually a _default_ feature of this crate, not opt-in as first assumed; dropping it is deferred until the real tokenizer.json's pretokenizer type is inspected | Avoid repeating an unverified claim in the opposite direction (§4)                                                                                                                   |
+| Model management scope                                               | Implicit only in the narrative goals                                                            | Listing + `--refresh-model` explicitly in scope; standalone remove explicitly out of scope                                                                                                                                                                  | Matches spec.md clarification session, not assumed                                                                                                                                   |
+| Registry size                                                        | 4 models (`tdt-v3`, `tdt-v2`, `ctc-0.6b`, `ctc-1.1b`)                                           | 3 models — `tdt-v3`, `tdt-v2`, `ctc-0.6b`; drops the invented `ctc-1.1b`                                                                                                                                                                                    | `ctc-1.1b` doesn't exist on `istupakov`'s HuggingFace profile (verified directly); `tdt-v2` does, so it's kept rather than replaced with a second nonexistent CTC model (§3)         |
+| Download failure behavior                                            | Single generic "download failed" error, no retry described                                      | Bounded retries (3, exponential backoff) then loud failure, never a silent model fallback                                                                                                                                                                   | Matches spec.md FR-022 clarification                                                                                                                                                 |
+| Progress reporting                                                   | Progress bar (`indicatif`) implied for all downloads; no mention of transcription-time progress | Download progress via `indicatif` (stderr) unchanged; added explicit per-chunk `"transcribing chunk N of M"` stderr output for inputs requiring chunked encoding, none required for single-pass inputs                                                      | Matches spec.md FR-023 clarification, which the prior spec predates                                                                                                                  |
+| Mel spectrogram parameters, tensor names, checksums, chunk threshold | Presented as settled implementation detail                                                      | Explicitly deferred to implementation-time verification                                                                                                                                                                                                     | Constitution Principle V — must be verified against real sources, not asserted at plan time                                                                                          |
+| Mel extraction & tokenizer approach                                  | Hand-rolled `rustfft` DSP + `tokenizers` crate w/ `tokenizer.json`                              | Run the model's own bundled preprocessor `.onnx` graph via `ort`; decode via plain `vocab.txt` lookup, no crate                                                                                                                                             | Neither `tokenizer.json` nor a DSP-verification burden actually exists once the real model files were checked (§10) — `rustfft`, `ndarray`, `tokenizers` all removed from Cargo.toml |

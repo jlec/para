@@ -1,5 +1,4 @@
 ---
-
 description: "Task list for Local Audio & Video Transcription"
 ---
 
@@ -28,9 +27,9 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 
 **Purpose**: Project initialization
 
-- [X] T001 Create the project structure per plan.md's Project Structure section: `Cargo.toml`, `src/main.rs`, `src/audio.rs`, `src/model/{mod.rs,registry.rs,manager.rs}`, `src/inference/{mod.rs,engine.rs,mel.rs,decoder.rs}`, `src/output/{mod.rs,text.rs,json.rs,srt.rs}`, `tests/contract/`, `tests/integration.rs`
-- [X] T002 Add dependencies to `Cargo.toml`: `clap` (derive, env), `ort`, `rustfft`, `ndarray`, `tokenizers` (full default features, including `onig` — corrected mid-implementation, see research.md §4), `reqwest` (blocking, stream), `indicatif`, `serde`/`serde_json`, `anyhow`, `thiserror`, `tempfile`, `which`, `dirs`. Resolve real current versions via `cargo add` for each — do not guess or hardcode a version number that hasn't been confirmed to resolve.
-- [X] T003 Configure `Cargo.toml`'s `[profile.release]` (lto, codegen-units) and the `integration` test feature flag; add `rust:build`, `rust:release`, `rust:release-all`, `rust:test`, `rust:integration`, `rust:clippy`, `rust:fmt`, `rust:lint`, `rust:clean` tasks to the existing `Taskfile.yml` (this repo's task runner — no separate Makefile) (cross-compilation caveat documented in README, not baked into the task definitions — research.md §9)
+- [x] T001 Create the project structure per plan.md's Project Structure section: `Cargo.toml`, `src/main.rs`, `src/audio.rs`, `src/model/{mod.rs,registry.rs,manager.rs}`, `src/inference/{mod.rs,engine.rs,mel.rs,decoder.rs}`, `src/output/{mod.rs,text.rs,json.rs,srt.rs}`, `tests/contract/`, `tests/integration.rs`
+- [x] T002 Add dependencies to `Cargo.toml`: `clap` (derive, env), `ort`, `rustfft`, `ndarray`, `tokenizers` (full default features, including `onig` — corrected mid-implementation, see research.md §4), `reqwest` (blocking, stream), `indicatif`, `serde`/`serde_json`, `anyhow`, `thiserror`, `tempfile`, `which`, `dirs`. Resolve real current versions via `cargo add` for each — do not guess or hardcode a version number that hasn't been confirmed to resolve.
+- [x] T003 Configure `Cargo.toml`'s `[profile.release]` (lto, codegen-units) and the `integration` test feature flag; add `rust:build`, `rust:release`, `rust:release-all`, `rust:test`, `rust:integration`, `rust:clippy`, `rust:fmt`, `rust:lint`, `rust:clean` tasks to the existing `Taskfile.yml` (this repo's task runner — no separate Makefile) (cross-compilation caveat documented in README, not baked into the task definitions — research.md §9)
 
 **Checkpoint**: `cargo build` succeeds with an empty skeleton before any foundational logic is added.
 
@@ -42,19 +41,19 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [X] T004 [P] Define shared types per data-model.md — `Transcript`, `Segment`, `OutputFormat`, `Device`, `ModelKind` — in `src/inference/mod.rs` and `src/output/mod.rs`
-- [X] T005 [P] Implement the `Cli` derive struct (`-i/--input`, `-o/--output`, `-m/--model`, `-f/--format`, `--device`, `--cache-dir`, `--list-models`, `--refresh-model`, env var overrides) in `src/main.rs` per contracts/cli-interface.md
-- [X] T006 Implement the top-level error boundary in `src/main.rs`: `main()` calls `run() -> anyhow::Result<()>`, converts any `Err` to `eprintln!("error: {e:#}")` + `std::process::exit(1)`; detect stdin-is-a-TTY-with-no-input and exit 1 with a usage error (FR-002) (depends on: T005)
-- [X] T007 [P] Implement ffmpeg discovery (`which::which("ffmpeg")`) with a specific "ffmpeg not found" error in `src/audio.rs`
-- [X] T008 Implement audio transcoding to 16 kHz mono 16-bit PCM WAV via an ffmpeg subprocess, plus probing for duration and audio-track presence, in `src/audio.rs` (FR-001, FR-003, FR-015) (depends on: T007). Handle non-UTF-8 paths via `Result`/`to_string_lossy()`, not `.unwrap()` — the prior draft spec's `input_path.to_str().unwrap()` sample panics on such paths, which Constitution Engineering Standards prohibit in library code; do not transcribe that pattern.
-- [X] T009 Implement stdin staging via `tempfile::NamedTempFile` and magic-byte format detection (WAV/MP3/M4A/MKV/FLAC/OGG, diagnostics only) in `src/audio.rs` (FR-002) (depends on: T008)
+- [x] T004 [P] Define shared types per data-model.md — `Transcript`, `Segment`, `OutputFormat`, `Device`, `ModelKind` — in `src/inference/mod.rs` and `src/output/mod.rs`
+- [x] T005 [P] Implement the `Cli` derive struct (`-i/--input`, `-o/--output`, `-m/--model`, `-f/--format`, `--device`, `--cache-dir`, `--list-models`, `--refresh-model`, env var overrides) in `src/main.rs` per contracts/cli-interface.md
+- [x] T006 Implement the top-level error boundary in `src/main.rs`: `main()` calls `run() -> anyhow::Result<()>`, converts any `Err` to `eprintln!("error: {e:#}")` + `std::process::exit(1)`; detect stdin-is-a-TTY-with-no-input and exit 1 with a usage error (FR-002) (depends on: T005)
+- [x] T007 [P] Implement ffmpeg discovery (`which::which("ffmpeg")`) with a specific "ffmpeg not found" error in `src/audio.rs`
+- [x] T008 Implement audio transcoding to 16 kHz mono 16-bit PCM WAV via an ffmpeg subprocess, plus probing for duration and audio-track presence, in `src/audio.rs` (FR-001, FR-003, FR-015) (depends on: T007). Handle non-UTF-8 paths via `Result`/`to_string_lossy()`, not `.unwrap()` — the prior draft spec's `input_path.to_str().unwrap()` sample panics on such paths, which Constitution Engineering Standards prohibit in library code; do not transcribe that pattern.
+- [x] T009 Implement stdin staging via `tempfile::NamedTempFile` and magic-byte format detection (WAV/MP3/M4A/MKV/FLAC/OGG, diagnostics only) in `src/audio.rs` (FR-002) (depends on: T008)
 - [ ] T010 [P] Define the static model registry (3 verified-real models: `parakeet-tdt-0.6b-v3` default TDT, `parakeet-tdt-0.6b-v2` TDT, `parakeet-ctc-0.6b` CTC — research.md §3) in `src/model/registry.rs`. Each entry's `files` list is its encoder + vocab.txt + (TDT only) decoder-joint graph — the mel preprocessor is vendored, not part of this list (research.md §10; data-model.md). Download each model's real files first and compute actual SHA256 checksums — never placeholder them (Constitution Principle V). **Structure and real repo/file names are in place; checksums are still `None` pending the actual (multi-GB) downloads — not yet checked off.**
-- [X] T011 Implement model cache path resolution (`--cache-dir`/`PARA_CACHE_DIR`/`dirs::cache_dir()` default) and cache-state checking (`NotCached`/`Cached` via file existence + checksum match) in `src/model/manager.rs` (depends on: T010)
-- [X] T012 Implement model download with stderr-only progress (`indicatif`), atomic `.tmp`-then-rename on success, stale-`.tmp` cleanup on startup, and a `download.lock` guard file in `src/model/manager.rs` (depends on: T011). Implemented and unit-tested for cache-state logic; not yet exercised against a live download (no network fetch has actually been run through this path).
-- [X] T013 Implement bounded download retry with exponential backoff (3 attempts) in `src/model/manager.rs`; on exhaustion, return a specific `thiserror` error and never fall back to a different cached model (FR-022) (depends on: T012)
-- [X] T014 Implement `--refresh-model` support (delete cached files, then re-download) as a manager function in `src/model/manager.rs` (FR-020) (depends on: T013)
-- [X] T015 [P] Implement `src/inference/mel.rs` to load and run the vendored preprocessor ONNX graph (`assets/preprocessors/nemo128.onnx` for TDT models, `nemo80.onnx` for CTC, selected by `ModelKind`, embedded via `include_bytes!`) as an `ort` session: raw waveform samples + lengths in, mel-feature tensor + lengths out (research.md §10 — supersedes the original rustfft/ndarray plan; no download, no cache-state, always present). Read the actual input/output tensor names (`waveforms`/`waveforms_lens`/`features`/`features_lens` per the reference implementation, but verify against the real vendored file) rather than hardcoding unconfirmed names. Tensor names confirmed via `onnxruntime` introspection of the real vendored files.
-- [X] T016 [P] Implement ONNX Runtime session-building in `src/inference/engine.rs`: a shared helper to construct a session from a model file path with device selection (CoreML default on darwin/aarch64, CPU elsewhere, explicit `--device` override) and the CoreML first-compile stderr notice. `engine.rs` will hold one such session per pipeline stage (preprocessor, encoder, and for TDT models a decoder-joint network — research.md §10). Verify the exact `ort` crate API (execution-provider construction, module path) against the version resolved in T002's docs.rs page before writing — do not transcribe the 1.x-style sample from the prior draft spec (research.md §1). API verified directly against the vendored `ort` 2.0.0-rc.12 source in the local cargo registry cache.
+- [x] T011 Implement model cache path resolution (`--cache-dir`/`PARA_CACHE_DIR`/`dirs::cache_dir()` default) and cache-state checking (`NotCached`/`Cached` via file existence + checksum match) in `src/model/manager.rs` (depends on: T010)
+- [x] T012 Implement model download with stderr-only progress (`indicatif`), atomic `.tmp`-then-rename on success, stale-`.tmp` cleanup on startup, and a `download.lock` guard file in `src/model/manager.rs` (depends on: T011). Implemented and unit-tested for cache-state logic; not yet exercised against a live download (no network fetch has actually been run through this path).
+- [x] T013 Implement bounded download retry with exponential backoff (3 attempts) in `src/model/manager.rs`; on exhaustion, return a specific `thiserror` error and never fall back to a different cached model (FR-022) (depends on: T012)
+- [x] T014 Implement `--refresh-model` support (delete cached files, then re-download) as a manager function in `src/model/manager.rs` (FR-020) (depends on: T013)
+- [x] T015 [P] Implement `src/inference/mel.rs` to load and run the vendored preprocessor ONNX graph (`assets/preprocessors/nemo128.onnx` for TDT models, `nemo80.onnx` for CTC, selected by `ModelKind`, embedded via `include_bytes!`) as an `ort` session: raw waveform samples + lengths in, mel-feature tensor + lengths out (research.md §10 — supersedes the original rustfft/ndarray plan; no download, no cache-state, always present). Read the actual input/output tensor names (`waveforms`/`waveforms_lens`/`features`/`features_lens` per the reference implementation, but verify against the real vendored file) rather than hardcoding unconfirmed names. Tensor names confirmed via `onnxruntime` introspection of the real vendored files.
+- [x] T016 [P] Implement ONNX Runtime session-building in `src/inference/engine.rs`: a shared helper to construct a session from a model file path with device selection (CoreML default on darwin/aarch64, CPU elsewhere, explicit `--device` override) and the CoreML first-compile stderr notice. `engine.rs` will hold one such session per pipeline stage (preprocessor, encoder, and for TDT models a decoder-joint network — research.md §10). Verify the exact `ort` crate API (execution-provider construction, module path) against the version resolved in T002's docs.rs page before writing — do not transcribe the 1.x-style sample from the prior draft spec (research.md §1). API verified directly against the vendored `ort` 2.0.0-rc.12 source in the local cargo registry cache.
 - [ ] T017 Implement chunked-encoding support for long inputs in `src/inference/engine.rs`, including the per-chunk `"transcribing chunk N of M"` stderr message (FR-023). Determine the actual chunk-length threshold empirically against the loaded encoder rather than hardcoding a guessed value (research.md §6) (depends on: T016)
 - [ ] T018 Implement vocab loading and token-id-to-text decoding (read `vocab.txt` as a line-indexed piece list; join pieces and replace SentencePiece `▁` with a space) as part of model resource loading in `src/inference/decoder.rs` (research.md §10 — supersedes the original `tokenizers` crate plan; no such crate is needed) (depends on: T017)
 
@@ -226,11 +225,11 @@ Task: "Implement text formatter in src/output/text.rs"                          
 ### Incremental Delivery
 
 1. Setup + Foundational → nothing user-visible yet, but the substrate is real and tested
-2. + User Story 1 → MVP: plain-text transcription (deploy/demo)
-3. + User Story 2 → model choice, listing, refresh (deploy/demo)
-4. + User Story 3 → structured JSON output (deploy/demo)
-5. + User Story 4 → subtitle output (deploy/demo)
-6. + Polish → README, lint-clean, full quickstart pass
+2. - User Story 1 → MVP: plain-text transcription (deploy/demo)
+3. - User Story 2 → model choice, listing, refresh (deploy/demo)
+4. - User Story 3 → structured JSON output (deploy/demo)
+5. - User Story 4 → subtitle output (deploy/demo)
+6. - Polish → README, lint-clean, full quickstart pass
 
 ### Team Strategy
 

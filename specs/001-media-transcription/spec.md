@@ -16,7 +16,7 @@
 - Q: When a user selects a model that isn't cached yet and the required download can't complete (no network, interrupted, unreachable server), what must happen? → A: The system retries the download a bounded number of times with backoff; regardless of retries, the end state is always a clear, specific error and a non-zero exit — never a silent fallback to a different model, and never a partially-downloaded model left in the cache.
 - Q: Must para emit progress indication to stderr during a long transcription run? → A: Required only when the input is long enough to need chunked processing (above the single-pass processing threshold) — a minimal per-chunk signal such as "transcribing chunk N of M" is sufficient; no percentage or progress bar is required. Inputs short enough to transcribe in a single pass need no interim progress output.
 
-## User Scenarios & Testing *(mandatory)*
+## User Scenarios & Testing _(mandatory)_
 
 ### User Story 1 - Get a plain-text transcript from a file (Priority: P1)
 
@@ -145,7 +145,7 @@ loads correctly in a common video player.
 - What happens when an input is long enough that it must be processed in
   multiple chunks rather than a single pass?
 
-## Requirements *(mandatory)*
+## Requirements _(mandatory)_
 
 ### Functional Requirements
 
@@ -232,7 +232,7 @@ loads correctly in a common video player.
   (plain text, structured timed data, or subtitles) and a destination
   (standard output or a file).
 
-## Success Criteria *(mandatory)*
+## Success Criteria _(mandatory)_
 
 ### Measurable Outcomes
 

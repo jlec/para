@@ -1,6 +1,6 @@
 {
   "template": "http://github.com/jlec/cookiecutter-general",
-  "commit": "0114a0ad5c937269204d61ebde35cc1261aaa92c",
+  "commit": "db830fe15ce364c9de86c9ccfce4c247368d7588",
   "checkout": null,
   "context": {
     "cookiecutter": {
@@ -36,12 +36,10 @@
       "python_version": "3.14",
       "scalr_env": "jlec",
       "scalr_workspace": "para",
-      "_copy_without_render": [
-        "charts/README.md.gotmpl"
-      ],
+      "_copy_without_render": ["charts/README.md.gotmpl"],
       "_go_app_name": "goer",
       "_template": "http://github.com/jlec/cookiecutter-general",
-      "_commit": "0114a0ad5c937269204d61ebde35cc1261aaa92c"
+      "_commit": "db830fe15ce364c9de86c9ccfce4c247368d7588"
     }
   },
   "directory": null

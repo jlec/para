@@ -40,6 +40,7 @@ Follow-up TODOs:
 ## Core Principles
 
 ### I. Single Binary, No Daemon
+
 para MUST be invoked once per transcription and exit when the job completes.
 There MUST be no background process, no server mode, and no persistent state
 carried between invocations. Every run starts cold and ends clean.
@@ -50,6 +51,7 @@ stuck locks) that contradict a tool meant to be dropped into scripts and
 pipelines without ceremony.
 
 ### II. Offline After Setup
+
 Once a model is cached locally, para MUST run with no network access.
 Network calls are permitted only to download a model on its first use, or
 when the user explicitly passes `--refresh-model`. No other code path may
@@ -60,6 +62,7 @@ calls during normal operation would break offline workflows, leak usage
 metadata, and undermine trust that the tool does only what it says.
 
 ### III. Stdout Is Sacred
+
 Stdout MUST carry only the transcript. All progress output, warnings, and
 errors MUST go to stderr, with no exceptions.
 
@@ -68,6 +71,7 @@ be piped directly into other tools (`para audio.wav | tee transcript.txt`)
 without post-processing to strip incidental noise.
 
 ### IV. Fail Loud, Fail Fast
+
 There MUST be no silent fallbacks. If a checksum doesn't match, if ffmpeg is
 missing, if the model can't load, para MUST error out immediately with a
 clear message and a non-zero exit code. para MUST NEVER guess and proceed.
@@ -77,6 +81,7 @@ or skipping a verification step) produces transcripts a user cannot trust
 and failures that surface far from their root cause.
 
 ### V. No Fabricated Data
+
 Model checksums, download URLs, and tensor shapes MUST be verified against
 real sources. They MUST NEVER be placeholdered, guessed, or invented.
 
@@ -85,6 +90,7 @@ the tool for every user on first run, since these values gate the model
 download and load path that Principle IV enforces.
 
 ### VI. Apple Silicon Is a First-Class Target
+
 CoreML acceleration on arm64 macOS MUST work out of the box. It MUST NOT
 require manual configuration, extra flags, or separate build steps beyond
 what any other supported target needs.
@@ -94,6 +100,7 @@ secondary optimization; treating it as an afterthought would degrade the
 experience for most users of a local-first, on-device tool.
 
 ### VII. Minimal Runtime Dependencies
+
 ffmpeg is the only external dependency the user must install themselves.
 Every other runtime dependency MUST be statically linked or fetched
 automatically at build time.
@@ -102,6 +109,7 @@ automatically at build time.
 against a single-binary tool meant to be easy to adopt and easy to trust.
 
 ### VIII. Composability Over Features
+
 para is a Unix-style tool: one job, done well, that plays nicely in a
 pipeline. Scope creep toward a server, a GUI, or a plugin system MUST be
 resisted.
@@ -132,6 +140,7 @@ the top of this file MUST be updated, dependent templates in
 date fields below MUST be updated.
 
 **Versioning policy**: This constitution follows semantic versioning:
+
 - **MAJOR** — a principle is removed or redefined in a backward-incompatible
   way (e.g., relaxing Principle II's offline requirement).
 - **MINOR** — a new principle or materially expanded section is added.
