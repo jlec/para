@@ -211,6 +211,10 @@ loads correctly in a common video player.
   per-chunk progress signal (e.g., "transcribing chunk N of M") to stderr
   as each chunk completes. Inputs short enough for a single pass are NOT
   required to produce any interim progress output.
+- **FR-024**: System MUST reject an unwritable output destination (e.g., no
+  disk space, no write permission) with a specific, clear error and a
+  non-zero exit, rather than reporting success without having written the
+  transcript.
 
 ### Key Entities
 

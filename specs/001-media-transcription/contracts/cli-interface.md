@@ -28,9 +28,22 @@ para -i audio.mp3 --refresh-model
 | `-f, --format <text\|json\|srt>` | No | `text` | FR-007 |
 | `--list-models` | No | — | Prints available models and their cache state, then exits 0 without transcribing — FR-019 |
 | `--refresh-model` | No | — | Forces the selected model's cache to be deleted and re-downloaded before the run proceeds — FR-020 |
+| `--device <auto\|coreml\|cpu>` | No | `auto` | Overrides execution-provider selection; `auto` picks CoreML on darwin/aarch64 and CPU elsewhere per Constitution Principle VI. Not a spec.md requirement — a plan-level addition (research.md), documented here so it's part of the frozen contract rather than an undocumented assumption. |
+| `--cache-dir <PATH>` | No | OS cache dir (`dirs::cache_dir()`) | Overrides where models are stored/looked up. |
 
 Standalone model removal (a command whose only effect is deleting a cached model without
 re-fetching it) is explicitly **not** part of this contract — FR-021.
+
+## Environment variables
+
+Each overrides the corresponding flag when the flag is not explicitly passed:
+
+| Variable | Overrides |
+|---|---|
+| `PARA_MODEL` | `-m, --model` |
+| `PARA_FORMAT` | `-f, --format` |
+| `PARA_DEVICE` | `--device` |
+| `PARA_CACHE_DIR` | `--cache-dir` |
 
 ## Stream contract
 
@@ -51,6 +64,7 @@ re-fetching it) is explicitly **not** part of this contract — FR-021.
 | Input file missing/unreadable/no audio track | empty | specific message naming the problem | non-zero |
 | Unknown `--model` value | empty | message + list of valid IDs | non-zero |
 | Model not cached, download exhausts retries (FR-022) | empty | specific message; never a silent switch to a different cached model | non-zero |
+| Output destination unwritable — no disk space, no write permission (FR-024) | empty | specific message naming the destination and reason | non-zero |
 | Successful run | transcript only | none, or progress messages only (never mixed with transcript content) | `0` |
 
 ## Test mapping

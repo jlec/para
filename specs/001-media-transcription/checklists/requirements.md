@@ -38,3 +38,6 @@
   recorded in the spec's Assumptions section instead of blocking on a
   question.
 - All items pass on first validation pass.
+- 2026-07-10: `/speckit-analyze` remediation added FR-024 (unwritable output
+  destination), resolving an edge case that previously had no answering
+  requirement. All checklist items still pass.

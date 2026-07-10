@@ -74,6 +74,16 @@ non-overlapping) but delivers a low-resolution subtitle/structured-output experi
 faster/CTC tiers. This is disclosed to the user via `--list-models` descriptions rather than
 hidden, and is recorded as a `timing_granularity` attribute on `ModelOption` in data-model.md.
 
+**Decision (registry size)**: Ship 3 models at launch — `parakeet-tdt-0.6b-v3` (default) plus two
+CTC alternates — not the prior draft's 4 (which also included `parakeet-tdt-0.6b-v2`). This
+satisfies FR-008's "at least three" without committing to a second TDT variant that exists in the
+prior draft only for backward-compatibility reasons that don't apply to a v1 tool with no prior
+release. **Alternatives considered**: carry `parakeet-tdt-0.6b-v2` forward as a 4th entry —
+rejected for v1; nothing in spec.md or the clarification session calls for a second multilingual
+tier, and an extra ~670MB download-on-first-use for a model with no compatibility need to serve is
+scope the tool doesn't require yet. Revisit if a concrete reason to keep v2 available surfaces
+(e.g., a regression in v3 for a specific language).
+
 **Exact file names, tensor names, and checksums are explicitly NOT resolved here.** Per
 Constitution Principle V, checksums must be computed from the actual downloaded files and tensor
 names read from the actual ONNX graphs — both are implementation-time (Phase 3/tasks) steps, not
@@ -186,6 +196,7 @@ README rather than assuming every build environment has outbound network access.
 | `ort` API code samples | 1.x-style `Environment`/`ExecutionProvider::CoreML(...)` | Re-derive from docs.rs for the pinned version at implementation time | Prior sample is 1.x API; 2.x has moved the execution-provider module at least once across RCs |
 | `tokenizers` features | `default-features = false, features = ["onig"]` | Default features, no `onig` | `onig` is a legacy, not-recommended, native-dependency option with no identified need for this model's tokenizer.json |
 | Model management scope | Implicit only in the narrative goals | Listing + `--refresh-model` explicitly in scope; standalone remove explicitly out of scope | Matches spec.md clarification session, not assumed |
+| Registry size | 4 models (`tdt-v3`, `tdt-v2`, `ctc-0.6b`, `ctc-1.1b`) | 3 models — drops `tdt-v2` | No spec.md or clarification requirement calls for a second multilingual tier; FR-008 only needs 3 (§3) |
 | Download failure behavior | Single generic "download failed" error, no retry described | Bounded retries (3, exponential backoff) then loud failure, never a silent model fallback | Matches spec.md FR-022 clarification |
 | Progress reporting | Progress bar (`indicatif`) implied for all downloads; no mention of transcription-time progress | Download progress via `indicatif` (stderr) unchanged; added explicit per-chunk `"transcribing chunk N of M"` stderr output for inputs requiring chunked encoding, none required for single-pass inputs | Matches spec.md FR-023 clarification, which the prior spec predates |
 | Mel spectrogram parameters, tensor names, checksums, chunk threshold | Presented as settled implementation detail | Explicitly deferred to implementation-time verification | Constitution Principle V — must be verified against real sources, not asserted at plan time |

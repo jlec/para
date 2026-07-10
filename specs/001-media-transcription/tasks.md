@@ -46,7 +46,7 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 - [ ] T005 [P] Implement the `Cli` derive struct (`-i/--input`, `-o/--output`, `-m/--model`, `-f/--format`, `--device`, `--cache-dir`, `--list-models`, `--refresh-model`, env var overrides) in `src/main.rs` per contracts/cli-interface.md
 - [ ] T006 Implement the top-level error boundary in `src/main.rs`: `main()` calls `run() -> anyhow::Result<()>`, converts any `Err` to `eprintln!("error: {e:#}")` + `std::process::exit(1)`; detect stdin-is-a-TTY-with-no-input and exit 1 with a usage error (FR-002) (depends on: T005)
 - [ ] T007 [P] Implement ffmpeg discovery (`which::which("ffmpeg")`) with a specific "ffmpeg not found" error in `src/audio.rs`
-- [ ] T008 Implement audio transcoding to 16 kHz mono 16-bit PCM WAV via an ffmpeg subprocess, plus probing for duration and audio-track presence, in `src/audio.rs` (FR-001, FR-003, FR-015) (depends on: T007)
+- [ ] T008 Implement audio transcoding to 16 kHz mono 16-bit PCM WAV via an ffmpeg subprocess, plus probing for duration and audio-track presence, in `src/audio.rs` (FR-001, FR-003, FR-015) (depends on: T007). Handle non-UTF-8 paths via `Result`/`to_string_lossy()`, not `.unwrap()` — the prior draft spec's `input_path.to_str().unwrap()` sample panics on such paths, which Constitution Engineering Standards prohibit in library code; do not transcribe that pattern.
 - [ ] T009 Implement stdin staging via `tempfile::NamedTempFile` and magic-byte format detection (WAV/MP3/M4A/MKV/FLAC/OGG, diagnostics only) in `src/audio.rs` (FR-002) (depends on: T008)
 - [ ] T010 [P] Define the static model registry (≥3 models: `parakeet-tdt-0.6b-v3` default TDT + at least two CTC alternates) in `src/model/registry.rs`. Download each model's real files first and compute actual SHA256 checksums — never placeholder them (Constitution Principle V; research.md §3)
 - [ ] T011 Implement model cache path resolution (`--cache-dir`/`PARA_CACHE_DIR`/`dirs::cache_dir()` default) and cache-state checking (`NotCached`/`Cached` via file existence + checksum match) in `src/model/manager.rs` (depends on: T010)
@@ -71,7 +71,7 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 ### Tests for User Story 1
 
 - [ ] T019 [P] [US1] Contract test: `--format text` (default) writes only the transcript to stdout, nothing else, in `tests/contract/test_stdout_contract.rs`
-- [ ] T020 [P] [US1] Contract test: ffmpeg-missing, input-not-found, no-audio-track, and empty/corrupted-file all exit non-zero with a specific stderr message and empty stdout, in `tests/contract/test_error_paths.rs`
+- [ ] T020 [P] [US1] Contract test: ffmpeg-missing, input-not-found, no-audio-track, empty/corrupted-file, and an unwritable output destination (no disk space / no write permission, FR-024) all exit non-zero with a specific stderr message and empty stdout, in `tests/contract/test_error_paths.rs`
 - [ ] T021 [P] [US1] Integration test (feature = `integration`): end-to-end text transcription against a cached fixture model produces a non-empty transcript, in `tests/integration.rs`
 
 ### Implementation for User Story 1
@@ -79,7 +79,7 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 - [ ] T022 [P] [US1] Implement the TDT greedy decoder (token+duration decode loop, segment collection) in `src/inference/decoder.rs`. Read actual tensor names/shapes from the real downloaded ONNX files before hardcoding any (research.md §3)
 - [ ] T023 [P] [US1] Implement the plain-text output formatter (`transcript.text` + trailing newline, nothing else) in `src/output/text.rs`
 - [ ] T024 [US1] Wire `run()` in `src/main.rs`: resolve input (file path or staged stdin) → transcode via `audio.rs` → ensure the default model is cached via `manager.rs` → build an ONNX session via `engine.rs` → `mel.rs` → `decoder.rs` (TDT) → `text.rs` → write to stdout or the `-o` file (FR-004, FR-011) (depends on: T022, T023)
-- [ ] T025 [US1] Add the specific stderr error messages for each FR-015 rejection case (unsupported/corrupted/no-audio input) in `src/main.rs`, matching contracts/cli-interface.md's error table (depends on: T024)
+- [ ] T025 [US1] Add the specific stderr error messages for each FR-015 rejection case (unsupported/corrupted/no-audio input) and the FR-024 unwritable-output-destination case in `src/main.rs`, matching contracts/cli-interface.md's error table (depends on: T024)
 
 **Checkpoint**: At this point, User Story 1 is fully functional and independently testable — this is the MVP.
 
@@ -96,13 +96,15 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 - [ ] T026 [P] [US2] Contract test: an unrecognized `--model` value exits non-zero, lists valid IDs, and attempts no transcription, in `tests/contract/test_model_unknown.rs`
 - [ ] T027 [P] [US2] Contract test: `--list-models` lists every registered model with cache state and marks exactly one default, in `tests/contract/test_list_models.rs`
 - [ ] T028 [P] [US2] Contract test: selecting a specific model actually uses that model (echoed in output/status), never silently substituted, in `tests/contract/test_model_selection.rs`
+- [ ] T029 [P] [US2] Contract test: the CLI's flag surface has no standalone command whose only effect is removing a cached model without also re-fetching it (guards FR-021), in `tests/contract/test_no_standalone_remove.rs`
 
 ### Implementation for User Story 2
 
-- [ ] T029 [US2] Implement the CTC greedy decoder (argmax + collapse-repeats + remove-blanks, single whole-file segment) in `src/inference/decoder.rs`. Verify actual tensor names from the real CTC ONNX files before hardcoding (research.md §3) (depends on: T022)
-- [ ] T030 [US2] Wire `--model` flag validation against the registry (unknown ID → error + valid-options list, FR-010) in `src/main.rs` (depends on: T024, T029)
-- [ ] T031 [US2] Implement the `--list-models` command output (id, description including language/timing-granularity per data-model.md's `ModelOption`, cache state, default marker), exiting 0 without transcribing (FR-019) (depends on: T030)
-- [ ] T032 [US2] Wire `--refresh-model` to the manager's refresh function from T014, in `src/main.rs` (FR-020) (depends on: T031)
+- [ ] T030 [US2] Implement the CTC greedy decoder (argmax + collapse-repeats + remove-blanks, single whole-file segment) in `src/inference/decoder.rs`. Verify actual tensor names from the real CTC ONNX files before hardcoding (research.md §3) (depends on: T022)
+- [ ] T031 [US2] Wire `--model` flag validation against the registry (unknown ID → error + valid-options list, FR-010) in `src/main.rs` (depends on: T024, T030)
+- [ ] T032 [US2] Emit a stderr status line identifying the model actually used (e.g., `"using model: <id>"`) on every transcription run, in `src/main.rs` (FR-009; spec.md US2 acceptance scenarios 1 and 3 — the model used must be "clearly identified," not just correct) (depends on: T031)
+- [ ] T033 [US2] Implement the `--list-models` command output (id, description including language/timing-granularity per data-model.md's `ModelOption`, cache state, default marker), exiting 0 without transcribing (FR-019) (depends on: T032)
+- [ ] T034 [US2] Wire `--refresh-model` to the manager's refresh function from T014, in `src/main.rs` (FR-020) (depends on: T033)
 
 **Checkpoint**: User Stories 1 AND 2 both work independently.
 
@@ -116,13 +118,13 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 
 ### Tests for User Story 3
 
-- [ ] T033 [P] [US3] Contract test: `--format json` output validates against `contracts/output-json-schema.json`, and every segment has `end > start`, in `tests/contract/test_json_output.rs`
-- [ ] T034 [P] [US3] Integration test (feature = `integration`): end-to-end JSON transcription; deserialize and confirm `text`/`segments`/`model`/`duration_seconds` are present, in `tests/integration.rs`
+- [ ] T035 [P] [US3] Contract test: `--format json` output validates against `contracts/output-json-schema.json`, and every segment has `end > start`, in `tests/contract/test_json_output.rs`
+- [ ] T036 [P] [US3] Integration test (feature = `integration`): end-to-end JSON transcription; deserialize and confirm `text`/`segments`/`model`/`duration_seconds` are present, in `tests/integration.rs`
 
 ### Implementation for User Story 3
 
-- [ ] T035 [P] [US3] Implement the JSON output formatter (`serde_json`, seconds rounded to 2 decimal places) in `src/output/json.rs` per contracts/output-json-schema.json
-- [ ] T036 [US3] Wire the `--format json` dispatch in `src/main.rs` (depends on: T035)
+- [ ] T037 [P] [US3] Implement the JSON output formatter (`serde_json`, seconds rounded to 2 decimal places) in `src/output/json.rs` per contracts/output-json-schema.json
+- [ ] T038 [US3] Wire the `--format json` dispatch in `src/main.rs` (depends on: T037)
 
 **Checkpoint**: User Stories 1, 2, AND 3 all work independently.
 
@@ -136,13 +138,13 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 
 ### Tests for User Story 4
 
-- [ ] T037 [P] [US4] Contract test: SRT block numbering, comma millisecond separator, blank-line spacing, and the single-segment CTC-model fallback, in `tests/contract/test_srt_output.rs`
-- [ ] T038 [P] [US4] Integration test (feature = `integration`): end-to-end SRT transcription; verify `-->` and the comma separator are present, in `tests/integration.rs`
+- [ ] T039 [P] [US4] Contract test: SRT block numbering, comma millisecond separator, blank-line spacing, and the single-segment CTC-model fallback, in `tests/contract/test_srt_output.rs`
+- [ ] T040 [P] [US4] Integration test (feature = `integration`): end-to-end SRT transcription; verify `-->` and the comma separator are present, in `tests/integration.rs`
 
 ### Implementation for User Story 4
 
-- [ ] T039 [P] [US4] Implement the `fmt_srt_time` helper and SRT output formatter in `src/output/srt.rs` per contracts/output-srt.md
-- [ ] T040 [US4] Wire the `--format srt` dispatch in `src/main.rs` (depends on: T039)
+- [ ] T041 [P] [US4] Implement the `fmt_srt_time` helper and SRT output formatter in `src/output/srt.rs` per contracts/output-srt.md
+- [ ] T042 [US4] Wire the `--format srt` dispatch in `src/main.rs` (depends on: T041)
 
 **Checkpoint**: All four user stories are independently functional.
 
@@ -152,10 +154,10 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 
 **Purpose**: Documentation and final verification across all stories
 
-- [ ] T041 [P] Write `README.md` per plan.md's README requirements: prerequisites, build, first-run behavior (model download progress, CoreML compile notice), all flags with examples, model IDs and when to use each, `PARA_CACHE_DIR`, language support notes, the ONNX Runtime build-time-fetch note plus `ORT_DYLIB_PATH` escape hatch, and the cross-compilation-tooling caveat (research.md §9)
-- [ ] T042 [P] Run `cargo clippy -- -D warnings` and `cargo fmt --check`; fix any findings
-- [ ] T043 Run every scenario in quickstart.md end-to-end against a real release build (all four user stories, offline operation, pipeline safety, `--refresh-model`)
-- [ ] T044 [P] Add inline `#[cfg(test)]` unit tests for output-formatter edge cases not already covered by contract tests (e.g., `fmt_srt_time(3661.5) == "01:01:01,500"`, CTC single-segment SRT block) in `src/output/srt.rs` and `src/output/json.rs`
+- [ ] T043 [P] Write `README.md` per plan.md's README requirements: prerequisites, build, first-run behavior (model download progress, CoreML compile notice), all flags with examples, model IDs and when to use each, `PARA_CACHE_DIR`, language support notes, the ONNX Runtime build-time-fetch note plus `ORT_DYLIB_PATH` escape hatch, and the cross-compilation-tooling caveat (research.md §9)
+- [ ] T044 [P] Run `cargo clippy -- -D warnings` and `cargo fmt --check`; fix any findings
+- [ ] T045 Run every scenario in quickstart.md end-to-end against a real release build (all four user stories, offline operation, pipeline safety, `--refresh-model`)
+- [ ] T046 [P] Add inline `#[cfg(test)]` unit tests for output-formatter edge cases not already covered by contract tests (e.g., `fmt_srt_time(3661.5) == "01:01:01,500"`, CTC single-segment SRT block) in `src/output/srt.rs` and `src/output/json.rs`
 
 ---
 
@@ -166,7 +168,7 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 - **Setup (Phase 1)**: No dependencies — start immediately
 - **Foundational (Phase 2)**: Depends on Setup — BLOCKS all user stories
 - **User Story 1 (Phase 3)**: Depends on Foundational only — this is the MVP
-- **User Story 2 (Phase 4)**: Depends on Foundational; T029 also depends on US1's T022 (both extend `decoder.rs`)
+- **User Story 2 (Phase 4)**: Depends on Foundational; T030 also depends on US1's T022 (both extend `decoder.rs`)
 - **User Story 3 (Phase 5)**: Depends on Foundational; independent of US2, only needs a `Transcript` with `segments` (produced by either decoder from US1/US2)
 - **User Story 4 (Phase 6)**: Depends on Foundational; independent of US2/US3
 - **Polish (Phase 7)**: Depends on all four user stories being complete
@@ -183,10 +185,10 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 - Setup: none (T002/T003 both edit `Cargo.toml` sequentially)
 - Foundational: T004, T005, T007, T010, T015, T016 can start in parallel (five independent files); their sequential follow-ons (T006, T008→T009, T011→T014, T017→T018) proceed once each starting task lands
 - US1: T019, T020, T021 (tests) in parallel; T022, T023 (decoder vs. text formatter) in parallel
-- US2: T026, T027, T028 (tests, three separate files) in parallel
-- US3: T033, T034 in parallel; T035 has no same-phase counterpart to parallelize with
-- US4: T037, T038 in parallel; T039 has no same-phase counterpart to parallelize with
-- Polish: T041, T042, T044 in parallel; T043 runs last, after everything else
+- US2: T026, T027, T028, T029 (tests, four separate files) in parallel
+- US3: T035, T036 in parallel; T037 has no same-phase counterpart to parallelize with
+- US4: T039, T040 in parallel; T041 has no same-phase counterpart to parallelize with
+- Polish: T043, T044, T046 in parallel; T045 runs last, after everything else
 
 ## Parallel Example: Foundational Phase
 
@@ -232,7 +234,7 @@ Task: "Implement text formatter in src/output/text.rs"                          
 
 ### Team Strategy
 
-Once Foundational is done, US2/US3/US4 can be split across contributors — US3 and US4 only need a `Transcript` with `segments`, which US1's T022 (TDT decoder) already produces; they don't need to wait on US2's CTC decoder work. Only T029 (CTC decoder) has a real cross-story dependency, on T022.
+Once Foundational is done, US2/US3/US4 can be split across contributors — US3 and US4 only need a `Transcript` with `segments`, which US1's T022 (TDT decoder) already produces; they don't need to wait on US2's CTC decoder work. Only T030 (CTC decoder) has a real cross-story dependency, on T022.
 
 ---
 
