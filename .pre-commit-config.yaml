@@ -120,7 +120,7 @@ repos:
       - id: clippy
         args: ["--", "-D", "warnings"]
   - repo: https://github.com/EmbarkStudios/cargo-deny
-    rev: "0.19.8"
+    rev: "0.20.2"
     hooks:
       - id: cargo-deny
         args: ["check"]
