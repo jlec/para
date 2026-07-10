@@ -19,8 +19,16 @@
         "additionalProperties": false,
         "required": ["start", "end", "text"],
         "properties": {
-          "start": { "type": "number", "minimum": 0, "description": "Seconds, 2 decimal places." },
-          "end": { "type": "number", "minimum": 0, "description": "Seconds, 2 decimal places. Must be > start." },
+          "start": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Seconds, 2 decimal places."
+          },
+          "end": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Seconds, 2 decimal places. Must be > start."
+          },
           "text": { "type": "string" }
         }
       }

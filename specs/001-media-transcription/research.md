@@ -74,15 +74,27 @@ non-overlapping) but delivers a low-resolution subtitle/structured-output experi
 faster/CTC tiers. This is disclosed to the user via `--list-models` descriptions rather than
 hidden, and is recorded as a `timing_granularity` attribute on `ModelOption` in data-model.md.
 
-**Decision (registry size)**: Ship 3 models at launch — `parakeet-tdt-0.6b-v3` (default) plus two
-CTC alternates — not the prior draft's 4 (which also included `parakeet-tdt-0.6b-v2`). This
-satisfies FR-008's "at least three" without committing to a second TDT variant that exists in the
-prior draft only for backward-compatibility reasons that don't apply to a v1 tool with no prior
-release. **Alternatives considered**: carry `parakeet-tdt-0.6b-v2` forward as a 4th entry —
-rejected for v1; nothing in spec.md or the clarification session calls for a second multilingual
-tier, and an extra ~670MB download-on-first-use for a model with no compatibility need to serve is
-scope the tool doesn't require yet. Revisit if a concrete reason to keep v2 available surfaces
-(e.g., a regression in v3 for a specific language).
+**Decision (registry size) — corrected again during implementation**: Ship the 3 models that
+actually exist and are verified real on `istupakov`'s HuggingFace profile (checked directly, not
+inferred): `parakeet-tdt-0.6b-v3` (default), `parakeet-tdt-0.6b-v2`, and `parakeet-ctc-0.6b`.
+
+This reverses the immediately preceding version of this decision, which planned to drop
+`parakeet-tdt-0.6b-v2` in favor of "two CTC alternates" — a plan-time guess made before checking
+whether a second CTC-family Parakeet ONNX export actually exists. It doesn't: `istupakov`'s profile
+lists exactly one CTC variant (`parakeet-ctc-0.6b-onnx`) alongside `parakeet-rnnt-0.6b-onnx` (a
+different decode architecture, not part of this tool's TDT/CTC `ModelKind` design) and no
+`ctc-1.1b` of any kind — that entry in the original prior-draft spec (`locate via HuggingFace
+search at implementation time`) does not resolve to a real repo. Rather than invent one or bolt on
+an unrelated architecture, this reverts to the verified 3: two TDT variants (differing mainly in
+language coverage — v3 multilingual, v2 English-only — rather than speed, since they share the
+same architecture and size) plus the one real CTC variant, which is the genuinely faster,
+lower-accuracy tier (single forward pass, no autoregressive decode). This still satisfies FR-008's
+"at least three... trading processing speed against transcription accuracy."
+
+**Alternatives considered**: A second, invented CTC model — rejected outright, this is exactly the
+kind of fabrication Constitution Principle V prohibits. `parakeet-rnnt-0.6b-onnx` as a 4th/replacement
+entry — rejected for v1; RNNT is a third decode architecture this tool doesn't implement, and adding
+it widens scope (a third decoder implementation) beyond what FR-008 requires.
 
 **Exact file names, tensor names, and checksums are explicitly NOT resolved here.** Per
 Constitution Principle V, checksums must be computed from the actual downloaded files and tensor
@@ -92,22 +104,51 @@ kind of fabrication Principle V prohibits.
 
 ## 4. Tokenizer crate feature set
 
-**Decision**: Use the `tokenizers` crate with default features; drop the prior spec's
-`default-features = false, features = ["onig"]`.
+> **⚠ SUPERSEDED 2026-07-10 — see "10. ONNX-native preprocessing and vocab-based decoding" below.**
+> The premise of this entire section (that a HuggingFace `tokenizer.json` exists and the
+> `tokenizers` crate is the right tool) turned out to be wrong once the real model files were
+> checked: there is no `tokenizer.json`, only a plain `vocab.txt`. Left in place, unedited, as a
+> record of what was believed at the time and why — see §10 for what actually ships and what
+> replaces this decision.
 
-**Rationale**: Verified via search that `onig` (Oniguruma regex engine) is a legacy,
-not-recommended option in HuggingFace-family tokenizer crates — it exists for pretokenizer regex
-behavior some older models need, adds a native C library dependency, and has worse runtime
-performance than the default pure-Rust regex path. A SentencePiece/Unigram tokenizer.json (what
-Parakeet ships) uses a `Metaspace` pretokenizer, not the legacy regex split `onig` exists for.
-Dropping it removes a native-library build dependency that added nothing for this model family —
-directly in the spirit of Constitution Principle VII and the Engineering Standards' "prefer
-well-maintained crates... for tokenization."
+**Decision (corrected during implementation — see below)**: Use the `tokenizers` crate's actual
+default features (`progressbar`, `onig`, `esaxx_fast`) as resolved by `cargo add tokenizers`
+against the real crate manifest. Do not pass `default-features = false`.
 
-**Alternatives considered**: Keep `onig` for safety — rejected; it's an unjustified dependency
-addition with no identified model requirement driving it.
+**Correction**: The original version of this section (written during planning, before any real
+build was attempted) claimed `onig` was an opt-in, not-recommended feature and planned to drop it
+via `default-features = false, features = ["onig"]` — inverted from what was intended (that
+line would have *kept* onig while dropping `progressbar`/`esaxx_fast`, the opposite of the stated
+goal). Worse, the underlying premise was wrong: inspecting `tokenizers` 0.23.1's actual
+`Cargo.toml` (`cargo add` then reading the resolved manifest) shows `onig` is part of `default =
+["progressbar", "onig", "esaxx_fast"]` for *this* crate — the "legacy, not-recommended" finding
+from the original web search was real, but for a different crate (`kitoken`'s `regex-onig`
+feature), not `tokenizers` itself. This is exactly the failure mode Constitution Principle V
+warns about: a plausible-sounding claim that wasn't checked against the actual dependency once it
+was addable, and it slipped through this document's own review because it matched what the prior
+draft spec assumed.
+
+**Rationale for keeping the default (including `onig`) now**: Whether Parakeet's tokenizer.json
+actually needs `onig`'s regex engine depends on its pretokenizer type, which is only knowable by
+inspecting the real downloaded `tokenizer.json` (Metaspace pretokenizers, as Unigram/SentencePiece
+models typically use, don't need it; some BPE pretokenizers with lookaround regex patterns do).
+That inspection hasn't happened yet — no model has been downloaded. Guessing `default-features =
+false` again without that inspection would repeat the same mistake in the opposite direction.
+`cargo build` with full defaults (including `onig`) succeeds in this environment (`onig_sys` builds
+via `cc`/`pkg-config` at compile time — a build-time native-toolchain dependency, not a runtime
+one, so Constitution Principle VII's *runtime*-dependency clause isn't implicated either way).
+
+**Alternatives considered**: `default-features = false, features = ["esaxx_fast", "progressbar"]`
+(drop `onig`) — deferred, not rejected: revisit once the real `tokenizer.json` is downloaded (task
+T030/T022-adjacent work) and its pretokenizer type can be read directly, rather than assumed.
 
 ## 5. Mel spectrogram parameters
+
+> **⚠ SUPERSEDED 2026-07-10 — see "10. ONNX-native preprocessing and vocab-based decoding" below.**
+> The premise of this section (that mel-spectrogram extraction must be hand-implemented in Rust
+> and its parameters verified against NeMo source) turned out to be avoidable: the model repo ships
+> its own ONNX graph that does this extraction. Left in place, unedited, as a record of what was
+> believed at the time and why — see §10 for what actually ships and what replaces this decision.
 
 **Decision**: Deferred to implementation-time verification against the NeMo
 `AudioToMelSpectrogramPreprocessor` config actually shipped with `parakeet-tdt-0.6b-v3`; the
@@ -176,9 +217,10 @@ cross-linker toolchain (e.g., the `cross` tool + Docker, or an equivalent cross-
 toolchain) that is **not** part of what an end user installs to *run* para — it's a maintainer/CI
 concern for producing release artifacts, not a runtime dependency covered by Principle VII (which
 is scoped to what "the user must install themselves" to use the tool). It's called out here, and
-must be called out again in the Makefile/README, so it's never silently assumed to be present on
-a contributor's machine. No action needed against Principle VII since it doesn't touch the
-end-user runtime footprint.
+must be called out again in the README (this repo drives Rust builds through the existing
+`Taskfile.yml`'s `rust:*` tasks, not a separate Makefile), so it's never silently assumed to be
+present on a contributor's machine. No action needed against Principle VII since it doesn't touch
+the end-user runtime footprint.
 
 **Finding**: The `ort` crate's `download-binaries` feature needs network access at *build* time
 (fetching the ORT binary the first time `para` is compiled from source), which is a different
@@ -188,15 +230,102 @@ violation, but it does mean an air-gapped *build* environment needs the `ORT_DYL
 hatch (§2) to point at a manually-provided ONNX Runtime library. Document this explicitly in the
 README rather than assuming every build environment has outbound network access.
 
+## 10. ONNX-native preprocessing and vocab-based decoding (found 2026-07-10, during Foundational implementation)
+
+**Context**: While starting T010 (model registry) and T015 (mel extraction), I fetched the real
+file listing for `istupakov/parakeet-tdt-0.6b-v3-onnx` and `istupakov/parakeet-ctc-0.6b-onnx` from
+the HuggingFace API directly (not a scraped/summarized page) and read the reference Python
+implementation (`istupakov/onnx-asr`, the same author's package these ONNX exports are built for)
+on GitHub via `gh api`. Both superseded §4 and §5 above.
+
+**Finding 1 — no `tokenizer.json`**: Each model repo ships `config.json` and `vocab.txt`, not a
+HuggingFace-format `tokenizer.json`. `vocab.txt` is a plain newline-delimited list of SentencePiece
+pieces (one per line, line number = token id). Decoding is: look up each token id's line, join the
+pieces, replace the SentencePiece `▁` marker with a space. The `tokenizers` crate (which expects
+`tokenizer.json`) has no file to load here — it was never applicable to this model family, and §4's
+entire premise (an "onig" feature question) was moot from the start, not just the feature choice.
+
+**Decision**: Drop the `tokenizers` crate dependency entirely (`cargo remove tokenizers`, already
+done). Implement vocab lookup + `▁`→space decoding directly — a few dozen lines, no dependency,
+in the model resource loading path (was T018, now rewritten in tasks.md).
+
+**Finding 2 — mel-spectrogram extraction ships as its own ONNX graph**: Each model repo also
+includes a preprocessor file (`nemo128.onnx` for the TDT v3 repo). Reading `onnx_asr`'s
+`preprocessors/preprocessor.py`, `OnnxPreprocessor` loads this file into its own
+`onnxruntime.InferenceSession` and runs it directly on raw waveform samples: inputs
+`waveforms`/`waveforms_lens`, outputs `features`/`features_lens`. There is no hand-computed
+FFT/mel-filterbank math anywhere in the reference implementation for this preprocessor path — the
+model author ships the feature extraction as a portable ONNX graph precisely so consumers don't
+have to reimplement and verify NeMo's DSP parameters themselves.
+
+**Decision**: Run the bundled preprocessor `.onnx` file as a second `ort` session (raw waveform
+samples in, mel-feature tensor out) instead of hand-implementing mel extraction with `rustfft`.
+Drop `rustfft` (its only purpose was this DSP) and `ndarray` (added for the same reason; `ort`'s
+own tensor/`Value` construction from `(shape, data)` doesn't require it, and nothing else in this
+codebase needs N-dimensional array operations — reconsider only if the encoder/decoder tensor
+plumbing turns out to genuinely need it once T022/T030 are implemented against real tensor shapes).
+Both removed via `cargo remove rustfft ndarray tokenizers`.
+
+**Rationale for the pivot overall**: This eliminates the single largest correctness risk this plan
+carried — Principle V already flagged that wrong mel parameters would produce a model that runs
+without erroring but transcribes garbage, and the only mitigation available at planning time was
+"verify carefully before implementing." Verification is no longer needed for the DSP math itself,
+because there's no DSP math left to get wrong — the model author's own graph does it. This is a
+strictly better outcome than the original plan, reached by checking the actual downloadable files
+instead of continuing to plan around an assumption.
+
+**What changes downstream**: `src/inference/engine.rs` now orchestrates up to 3 ONNX sessions per
+model (preprocessor → encoder → decoder-joint for TDT; preprocessor → encoder only for CTC) instead
+of 1 session plus hand-rolled DSP feeding it. `src/inference/mel.rs` keeps its name (minimal diff)
+but its job changes from "compute mel features" to "load and run the bundled preprocessor ONNX
+graph." None of `contracts/` (CLI surface, JSON schema, SRT format) changes — this is purely an
+internal pipeline detail, invisible at the spec/output level. Tensor names/shapes for the
+preprocessor graph are, like the encoder/decoder, explicitly **not** resolved here — read from the
+real downloaded `.onnx` file at implementation time (same Principle V discipline as §3).
+
+**Addendum, same day — where the preprocessor graph actually comes from**: Checking each model's
+own HuggingFace repo file listing shows the preprocessor file is *not* reliably present per model:
+`parakeet-tdt-0.6b-v3`/`-v2` both bundle `nemo128.onnx`, but `parakeet-ctc-0.6b` bundles no
+preprocessor at all, and no repo in this family bundles the 80-feature preprocessor CTC actually
+needs (`config.json`'s `features_size` field: 128 for both TDT variants, 80 for CTC — read via
+`_NemoConformer._preprocessor_name` in `onnx_asr/models/nemo.py`, which resolves to
+`f"nemo{features_size}"`). The one place both `nemo128.onnx` and `nemo80.onnx` are reliably and
+directly available is the versioned `onnx-asr` PyPI wheel itself (`onnx_asr/preprocessors/data/`),
+where the Python reference implementation loads them from as bundled package data.
+
+**Decision**: Vendor both files directly into the `para` source tree (`assets/preprocessors/`,
+loaded via `include_bytes!`) rather than downloading either at runtime. Both are tiny (~139KB and
+~87KB — confirmed by extracting the real `onnx_asr-0.11.0-py3-none-any.whl` and checking file
+sizes), MIT-licensed (`onnx-asr`, copyright Ilya Stupakov — license text and real SHA-256 checksums
+recorded in `assets/preprocessors/NOTICE.md`), and shared across the whole model family rather than
+being per-model unique weights. This is a strictly better fit for Constitution Principle II than
+even the normal "download on first use" path: these two files need no network access ever, not even
+once, and Principle VII's "statically linked or fetched automatically at build time" is satisfied
+by literal static linking (compiled into the binary) rather than a build-time fetch.
+
+**Alternatives considered**: Downloading the PyPI wheel at runtime and extracting the needed file —
+rejected; it would add a zip-reading dependency and a second, inconsistent download mechanism
+(archive-extraction vs. every other model file's direct-binary-download) for two files that are
+smaller than this section of research.md. Fetching `nemo128.onnx` directly from the TDT HF repos
+(reusing the normal model-file download path) while leaving `nemo80.onnx` unsolved — rejected, it
+doesn't actually solve the CTC case and produces two different sourcing strategies across models
+for no benefit. Dropping CTC support to avoid the problem — rejected, violates FR-008's
+at-least-three-models requirement.
+
+**Consequence for `data-model.md`**: the preprocessor is no longer one of `ModelOption`'s
+downloaded/cached `files` — it's selected at compile time by `ModelKind`/`features_size` from the
+two vendored assets, never entering the download-and-cache flow at all.
+
 ## Summary of changes from the prior technical spec
 
 | Area | Prior spec | Resolved here | Why |
 |---|---|---|---|
 | ORT linking | `download-binaries` + `copy-dylibs` implied near-single-binary | `load-dynamic` + `ORT_DYLIB_PATH`, dylib shipped alongside the binary in releases | `copy-dylibs` is a dev-convenience for `cargo run`, not a distribution strategy; verified against `ort`'s own linking docs |
 | `ort` API code samples | 1.x-style `Environment`/`ExecutionProvider::CoreML(...)` | Re-derive from docs.rs for the pinned version at implementation time | Prior sample is 1.x API; 2.x has moved the execution-provider module at least once across RCs |
-| `tokenizers` features | `default-features = false, features = ["onig"]` | Default features, no `onig` | `onig` is a legacy, not-recommended, native-dependency option with no identified need for this model's tokenizer.json |
+| `tokenizers` features | `default-features = false, features = ["onig"]` | Full defaults kept (`onig` included) — corrected mid-implementation after finding `onig` is actually a *default* feature of this crate, not opt-in as first assumed; dropping it is deferred until the real tokenizer.json's pretokenizer type is inspected | Avoid repeating an unverified claim in the opposite direction (§4) |
 | Model management scope | Implicit only in the narrative goals | Listing + `--refresh-model` explicitly in scope; standalone remove explicitly out of scope | Matches spec.md clarification session, not assumed |
-| Registry size | 4 models (`tdt-v3`, `tdt-v2`, `ctc-0.6b`, `ctc-1.1b`) | 3 models — drops `tdt-v2` | No spec.md or clarification requirement calls for a second multilingual tier; FR-008 only needs 3 (§3) |
+| Registry size | 4 models (`tdt-v3`, `tdt-v2`, `ctc-0.6b`, `ctc-1.1b`) | 3 models — `tdt-v3`, `tdt-v2`, `ctc-0.6b`; drops the invented `ctc-1.1b` | `ctc-1.1b` doesn't exist on `istupakov`'s HuggingFace profile (verified directly); `tdt-v2` does, so it's kept rather than replaced with a second nonexistent CTC model (§3) |
 | Download failure behavior | Single generic "download failed" error, no retry described | Bounded retries (3, exponential backoff) then loud failure, never a silent model fallback | Matches spec.md FR-022 clarification |
 | Progress reporting | Progress bar (`indicatif`) implied for all downloads; no mention of transcription-time progress | Download progress via `indicatif` (stderr) unchanged; added explicit per-chunk `"transcribing chunk N of M"` stderr output for inputs requiring chunked encoding, none required for single-pass inputs | Matches spec.md FR-023 clarification, which the prior spec predates |
 | Mel spectrogram parameters, tensor names, checksums, chunk threshold | Presented as settled implementation detail | Explicitly deferred to implementation-time verification | Constitution Principle V — must be verified against real sources, not asserted at plan time |
+| Mel extraction & tokenizer approach | Hand-rolled `rustfft` DSP + `tokenizers` crate w/ `tokenizer.json` | Run the model's own bundled preprocessor `.onnx` graph via `ort`; decode via plain `vocab.txt` lookup, no crate | Neither `tokenizer.json` nor a DSP-verification burden actually exists once the real model files were checked (§10) — `rustfft`, `ndarray`, `tokenizers` all removed from Cargo.toml |

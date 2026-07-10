@@ -1,0 +1,211 @@
+use crate::inference::ModelKind;
+
+/// Which timing resolution a model's decode path produces (data-model.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimingGranularity {
+    /// Phrase/sentence-level segments (TDT models).
+    Segment,
+    /// One segment spanning the whole input (CTC models — research.md §3).
+    WholeFile,
+}
+
+/// Which pipeline stage a `ModelFile` feeds (data-model.md). The mel
+/// preprocessor is deliberately absent — it's vendored, not downloaded
+/// (research.md §10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileRole {
+    Encoder,
+    DecoderJoint,
+    Vocab,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelFile {
+    /// Filename on disk within the model's cache directory.
+    pub name: &'static str,
+    pub role: FileRole,
+    /// HuggingFace `resolve/main/<filename>` URL.
+    pub source_url: &'static str,
+    /// Lowercase hex SHA-256, computed from the real downloaded file.
+    ///
+    /// `None` here means "not yet verified against a real download" — this
+    /// must never be treated as a valid checksum to skip against.
+    /// Constitution Principle V forbids inventing a value; `manager.rs`'s
+    /// checksum check must treat `None` as "verification required before
+    /// this entry can be used," not as "skip verification."
+    pub sha256: Option<&'static str>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelEntry {
+    pub id: &'static str,
+    pub description: &'static str,
+    pub kind: ModelKind,
+    pub timing_granularity: TimingGranularity,
+    pub is_default: bool,
+    pub files: &'static [ModelFile],
+}
+
+/// HuggingFace repo → local filename resolution, matching the reference
+/// `onnx-asr` implementation's `_get_model_files` (research.md §10).
+const HF_RESOLVE: &str = "https://huggingface.co";
+
+pub const MODELS: &[ModelEntry] = &[
+    ModelEntry {
+        id: "parakeet-tdt-0.6b-v3",
+        description: "Multilingual (25 European languages), automatic language detection, word-level timestamps. Default model.",
+        kind: ModelKind::Tdt,
+        timing_granularity: TimingGranularity::Segment,
+        is_default: true,
+        files: &[
+            ModelFile {
+                name: "encoder-model.onnx",
+                role: FileRole::Encoder,
+                source_url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/encoder-model.onnx",
+                sha256: None,
+            },
+            ModelFile {
+                name: "encoder-model.onnx.data",
+                role: FileRole::Encoder,
+                source_url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/encoder-model.onnx.data",
+                sha256: None,
+            },
+            ModelFile {
+                name: "decoder_joint-model.onnx",
+                role: FileRole::DecoderJoint,
+                source_url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/decoder_joint-model.onnx",
+                sha256: None,
+            },
+            ModelFile {
+                name: "vocab.txt",
+                role: FileRole::Vocab,
+                source_url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/vocab.txt",
+                sha256: None,
+            },
+        ],
+    },
+    ModelEntry {
+        id: "parakeet-tdt-0.6b-v2",
+        description: "English only, word-level timestamps. Retained for compatibility.",
+        kind: ModelKind::Tdt,
+        timing_granularity: TimingGranularity::Segment,
+        is_default: false,
+        files: &[
+            ModelFile {
+                name: "encoder-model.onnx",
+                role: FileRole::Encoder,
+                source_url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main/encoder-model.onnx",
+                sha256: None,
+            },
+            ModelFile {
+                name: "encoder-model.onnx.data",
+                role: FileRole::Encoder,
+                source_url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main/encoder-model.onnx.data",
+                sha256: None,
+            },
+            ModelFile {
+                name: "decoder_joint-model.onnx",
+                role: FileRole::DecoderJoint,
+                source_url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main/decoder_joint-model.onnx",
+                sha256: None,
+            },
+            ModelFile {
+                name: "vocab.txt",
+                role: FileRole::Vocab,
+                source_url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main/vocab.txt",
+                sha256: None,
+            },
+        ],
+    },
+    ModelEntry {
+        id: "parakeet-ctc-0.6b",
+        description: "English only. No per-word timestamps (whole-file single segment). Fastest tier — single forward pass, no autoregressive decode.",
+        kind: ModelKind::Ctc,
+        timing_granularity: TimingGranularity::WholeFile,
+        is_default: false,
+        files: &[
+            ModelFile {
+                name: "model.onnx",
+                role: FileRole::Encoder,
+                source_url: "https://huggingface.co/istupakov/parakeet-ctc-0.6b-onnx/resolve/main/model.onnx",
+                sha256: None,
+            },
+            ModelFile {
+                name: "model.onnx.data",
+                role: FileRole::Encoder,
+                source_url: "https://huggingface.co/istupakov/parakeet-ctc-0.6b-onnx/resolve/main/model.onnx.data",
+                sha256: None,
+            },
+            ModelFile {
+                name: "vocab.txt",
+                role: FileRole::Vocab,
+                source_url: "https://huggingface.co/istupakov/parakeet-ctc-0.6b-onnx/resolve/main/vocab.txt",
+                sha256: None,
+            },
+        ],
+    },
+];
+
+pub fn default_model() -> &'static ModelEntry {
+    MODELS
+        .iter()
+        .find(|m| m.is_default)
+        .expect("registry must have exactly one default model")
+}
+
+pub fn find(id: &str) -> Option<&'static ModelEntry> {
+    MODELS.iter().find(|m| m.id == id)
+}
+
+/// Implements `--list-models` (FR-019): every registered model, its cache
+/// state, and which one is the default. Exits the caller's `run()` with
+/// success — this function only prints; it does not transcribe.
+pub fn list_models() -> anyhow::Result<()> {
+    println!("Available models:\n");
+    for entry in MODELS {
+        let default_marker = if entry.is_default { "  (default)" } else { "" };
+        println!("  {}{}", entry.id, default_marker);
+        println!("    {}", entry.description);
+        let state = crate::model::manager::cache_state(entry)?;
+        println!("    Cache state: {state:?}\n");
+    }
+    println!("Use --model <id> to select a model.");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_model_has_required_fields() {
+        for entry in MODELS {
+            assert!(!entry.id.is_empty());
+            assert!(!entry.files.is_empty());
+            for file in entry.files {
+                assert!(!file.name.is_empty());
+                assert!(file.source_url.starts_with(HF_RESOLVE));
+            }
+        }
+    }
+
+    #[test]
+    fn exactly_one_default_model() {
+        assert_eq!(MODELS.iter().filter(|m| m.is_default).count(), 1);
+    }
+
+    #[test]
+    fn default_model_resolves() {
+        assert_eq!(default_model().id, "parakeet-tdt-0.6b-v3");
+    }
+
+    #[test]
+    fn at_least_three_models_per_fr_008() {
+        assert!(MODELS.len() >= 3);
+    }
+
+    #[test]
+    fn find_unknown_model_returns_none() {
+        assert!(find("does-not-exist").is_none());
+    }
+}

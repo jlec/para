@@ -8,20 +8,31 @@
 
 ## Summary
 
-para is a single-invocation Rust CLI that transcribes a local audio or video file (or piped bytes) to text using an on-device ONNX speech model, entirely offline once the model is cached. The user selects one of at least three models trading speed for accuracy (default: NVIDIA Parakeet TDT 0.6B v3, multilingual), and one of three output forms (plain text, JSON with segment timestamps, SRT subtitles). ffmpeg handles format normalization (the only dependency the user installs manually); the ONNX Runtime is fetched automatically at build time via the `ort` crate. Model listing and forced refresh (`--refresh-model`) are supported; standalone removal is not. Model downloads retry a bounded number of times with backoff before failing loud; long inputs that require chunked encoding emit minimal per-chunk progress to stderr.
+para is a single-invocation Rust CLI that transcribes a local audio or video file (or piped bytes) to text using an on-device ONNX speech model, entirely offline once the model is cached. The user selects one of three models trading speed for accuracy (default: NVIDIA Parakeet TDT 0.6B v3, multilingual; also v2 English-only TDT and a CTC English-only fast tier), and one of three output forms (plain text, JSON with segment timestamps, SRT subtitles). ffmpeg handles format normalization (the only dependency the user installs manually); the ONNX Runtime is fetched automatically at build time via the `ort` crate. Per model, inference chains up to 3 ONNX sessions — a bundled preprocessor graph (mel-feature extraction), an encoder, and (for TDT models) a decoder-joint network — with token-to-text decoding via a plain `vocab.txt` lookup rather than a tokenizer library (research.md §10). Model listing and forced refresh (`--refresh-model`) are supported; standalone removal is not. Model downloads retry a bounded number of times with backoff before failing loud; long inputs that require chunked encoding emit minimal per-chunk progress to stderr.
 
 ## Technical Context
 
 **Language/Version**: Rust, 2024 edition, MSRV 1.85 (minimum toolchain shipping the 2024 edition)
 
 **Primary Dependencies**:
-- `ort` (ONNX Runtime bindings; CoreML execution provider on Apple Silicon, CPU elsewhere) — exact version and execution-provider module path to be confirmed via `cargo add` and that version's docs.rs page at implementation time; the crate is at major version 2 (RC series) as of this plan and its execution-provider API surface has moved between RCs
-- `rustfft` + `ndarray` (mel spectrogram extraction)
-- `tokenizers` (HuggingFace tokenizer, default features — see research.md for why the `onig` feature from the prior draft spec is dropped)
+- `ort` (ONNX Runtime bindings; CoreML execution provider on Apple Silicon, CPU elsewhere) — resolved to `2.0.0-rc.12` via `cargo add`; runs up to 3 ONNX sessions per transcription (bundled mel preprocessor, encoder, and for TDT models a decoder-joint network)
 - `clap` (CLI parsing, derive + env features)
 - `reqwest` + `indicatif` (model download with progress, stderr-only)
 - `anyhow` (error propagation to the top-level handler) + `thiserror` (typed internal errors in the model manager, needed to distinguish retryable vs. terminal download failures per FR-022)
 - `tempfile`, `which`, `dirs` (stdin staging, ffmpeg discovery, cache path resolution)
+- `sha2` (checksum verification — Constitution Engineering Standards: prefer well-maintained crates for anything correctness-sensitive, checksums explicitly named)
+
+**No mel-DSP or tokenizer crate**: research.md §10 (found while implementing the Foundational
+phase, superseding §4 and §5) established that neither is needed. Mel-spectrogram extraction runs
+through one of two small, shared ONNX graphs (`nemo128.onnx` for TDT models, `nemo80.onnx` for
+CTC) — not reliably hosted per-model on HuggingFace, so vendored directly into the `para` binary
+(`assets/preprocessors/`, loaded via `include_bytes!`) rather than downloaded, sourced from and
+checksummed against the real `onnx-asr` PyPI wheel that publishes them. No `rustfft`/`ndarray` DSP
+implementation to write or verify. Token decoding is a lookup into each model's plain-text
+`vocab.txt` (no `tokenizer.json` exists for this model family) plus the SentencePiece `▁`→space
+convention — no `tokenizers` crate needed. All three (`rustfft`, `ndarray`, `tokenizers`) were
+added then removed from `Cargo.toml` during implementation once this was confirmed against the
+real files.
 
 **Storage**: Local filesystem only — model cache under the OS cache directory (or `--cache-dir`/`PARA_CACHE_DIR`), no database
 
@@ -51,7 +62,7 @@ para is a single-invocation Rust CLI that transcribes a local audio or video fil
 | II. Offline After Setup | Network I/O is confined to the model manager's download path, triggered only when a model isn't cached or `--refresh-model` is passed. Inference, audio preprocessing, and output writing perform no I/O beyond the filesystem. | PASS |
 | III. Stdout Is Sacred | Transcript writers (`output/text.rs`, `json.rs`, `srt.rs`) write only to the user-selected writer (stdout or file). `indicatif` progress bars, the CoreML first-compile notice, and chunk-progress messages (FR-023) are stderr-only by construction. | PASS — enforced by a contract test that asserts stdout is byte-for-byte the transcript for every output format |
 | IV. Fail Loud, Fail Fast | ffmpeg-missing, checksum mismatch, unknown model, and bounded-retry-exhausted download all return `Err` immediately with a specific message; `main` is the only place a process exit code is decided. No silent fallback to a different model or partial output. | PASS |
-| V. No Fabricated Data | Model checksums must be computed from the actual downloaded files during implementation (task-level step, not invented here); mel-spectrogram parameters and any chunking threshold are marked in research.md as "verify before implementing," not hardcoded on assumption. | PASS — contingent on the implementation phase doing the verification research.md defers to it |
+| V. No Fabricated Data | Model checksums must be computed from the actual downloaded files during implementation (task-level step, not invented here); the chunking threshold is marked in research.md as "verify before implementing," not hardcoded on assumption. Mel-spectrogram parameters are no longer a verification risk at all — research.md §10 found the model ships its own preprocessor ONNX graph, so there are no hand-computed DSP constants to get wrong. | PASS — contingent on the implementation phase doing the verification research.md defers to it |
 | VI. Apple Silicon First-Class | CoreML execution provider is the default `Device::Auto` choice on darwin/aarch64, falling back to CPU only on other targets — not an opt-in flag. | PASS |
 | VII. Minimal Runtime Dependencies | ffmpeg remains the only manual install. The ONNX Runtime is fetched automatically at build time (not a manual runtime install); see research.md for the specific linking strategy and the one caveat this creates for prebuilt-binary distribution. The `tokenizers` crate's optional native-library feature (`onig`) is dropped in favor of its default, dependency-free tokenization path. | PASS — with a documented packaging caveat, not a violation (see research.md §2) |
 | VIII. Composability Over Features | No server/GUI/plugin surface proposed; `--list-models` and `--refresh-model` are the only additions beyond the spec's core transcription flow, both scoped by clarification. | PASS |
@@ -82,8 +93,14 @@ specs/001-media-transcription/
 para/
 ├── Cargo.toml
 ├── Cargo.lock
-├── Makefile
 ├── README.md
+├── assets/
+│   └── preprocessors/            # Vendored mel-preprocessor ONNX graphs (research.md §10) — MIT-licensed,
+│                                  # provenance + checksums in NOTICE.md; compiled into the binary via include_bytes!
+│       ├── nemo128.onnx          # TDT models
+│       ├── nemo80.onnx           # CTC models
+│       ├── LICENSE
+│       └── NOTICE.md
 ├── src/
 │   ├── main.rs                  # Entry point; CLI definition (clap); top-level error handling (sole panic/exit boundary)
 │   ├── audio.rs                 # ffmpeg subprocess; format detection (diagnostics only); stdin temp-file staging
@@ -93,9 +110,9 @@ para/
 │   │   └── manager.rs           # Download, verify (SHA256), cache, list, refresh; bounded retry/backoff (FR-022)
 │   ├── inference/
 │   │   ├── mod.rs               # Re-exports; Transcript and Segment types
-│   │   ├── engine.rs            # ORT session setup; execution provider selection; chunking for long inputs (FR-023)
-│   │   ├── mel.rs                # Mel spectrogram extraction (rustfft + ndarray)
-│   │   └── decoder.rs           # TDT greedy decode; CTC greedy decode; token → string
+│   │   ├── engine.rs            # ORT session orchestration (preprocessor/encoder/decoder-joint); execution provider selection; chunking for long inputs (FR-023)
+│   │   ├── mel.rs                # Loads and runs the vendored preprocessor ONNX graph (research.md §10) — no hand-rolled DSP, no download
+│   │   └── decoder.rs           # TDT greedy decode; CTC greedy decode; token ids → text via vocab.txt lookup
 │   └── output/
 │       ├── mod.rs               # OutputFormat enum; write_transcript dispatch
 │       ├── text.rs

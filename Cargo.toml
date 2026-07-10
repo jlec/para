@@ -6,6 +6,26 @@ description = "Parakeet STT cli"
 repository = "https://github.com/jlec/para"
 license = "Apache-2.0"
 
+[dependencies]
+anyhow = "1.0.103"
+clap = { version = "4.6.1", features = ["derive", "env"] }
+dirs = "6.0.0"
+indicatif = "0.18.6"
+ort = {
+  version = "2.0.0-rc.12",
+  features = ["download-binaries", "load-dynamic"]
+}
+reqwest = { version = "0.13.4", features = ["blocking", "stream"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+sha2 = "0.11.0"
+tempfile = "3.27.0"
+thiserror = "2.0.18"
+which = "8.0.4"
+
+[features]
+integration = []
+
 [profile.release]
 strip = true
 lto = true

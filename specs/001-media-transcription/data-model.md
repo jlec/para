@@ -51,19 +51,29 @@ One selectable model, known statically at build time (FR-008, FR-009, FR-019).
 | `kind` | enum `TDT` \| `CTC` | Determines decoder path (research.md §3) and `timing_granularity` |
 | `timing_granularity` | enum `Segment` \| `WholeFile` | `TDT` → `Segment`; `CTC` → `WholeFile` (single segment) — surfaced to the user so choosing a fast/CTC model for subtitle output is an informed tradeoff, not a silent quality cliff |
 | `is_default` | `bool` | Exactly one entry MUST be `true` (FR-009) |
-| `files` | `Vec<ModelFile>` | What must be present/verified in the cache |
+| `files` | `Vec<ModelFile>` | What must be present/verified in the cache — per model this is an encoder ONNX graph, a `vocab.txt`, and (TDT only) a decoder-joint ONNX graph. The mel-spectrogram preprocessor is **not** part of this list (see note below) |
 | `cache_state` | enum `NotCached` \| `Cached` \| `Downloading` | Runtime-computed, not stored; drives `--list-models` display (FR-019) and whether a run triggers a download |
 
 ## ModelFile
 
-One file belonging to a `ModelOption`'s cache directory.
+One file belonging to a `ModelOption`'s cache directory: an encoder graph and a vocab file for
+every model, plus a decoder-joint graph for TDT-kind models (CTC-kind models decode directly from
+the encoder's output — research.md §3).
 
 | Field | Type | Notes |
 |---|---|---|
-| `name` | `String` | Filename on disk |
+| `name` | `String` | Filename on disk, e.g. `encoder-model.onnx`, `decoder_joint-model.onnx` (TDT only), `vocab.txt` |
+| `role` | enum `Encoder` \| `DecoderJoint` \| `Vocab` | Which stage of the pipeline this file feeds (`Vocab` is read directly, not run as a session) |
 | `source_url` | `String` | Resolved download URL (HuggingFace `resolve/main/<filename>` pattern) |
 | `sha256` | `String` | **Computed from the real downloaded file at implementation time** — never a placeholder (Constitution Principle V; research.md §3) |
 | `size_bytes` | `u64` | For progress-bar totals |
+
+**Note — the preprocessor is not a `ModelFile`**: mel-spectrogram feature extraction runs through
+one of two small, shared ONNX graphs (`nemo128.onnx` for TDT models, `nemo80.onnx` for CTC —
+selected by `ModelKind`, not per-model-unique) vendored directly into the `para` binary via
+`include_bytes!` rather than downloaded and cached. They never enter the `NotCached`/`Cached`/
+`Downloading` lifecycle described below — they're simply always present, compiled in
+(research.md §10; `assets/preprocessors/NOTICE.md` for provenance and checksums).
 
 **State transitions**: `NotCached → Downloading → Cached` on success; `Downloading → NotCached` on
 any failure (no partially-downloaded file is ever left in place — atomic rename on success only,

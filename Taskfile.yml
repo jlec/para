@@ -139,22 +139,52 @@ tasks:
   #
   #############################################################################
   rust:build:
-    desc: "Build Rust binaries (release mode)"
-    dir: rust
+    desc: "Build the para binary (debug mode)"
+    cmds:
+      - cmd: cargo build
+
+  rust:release:
+    desc: "Build the para binary (release mode)"
     cmds:
       - cmd: cargo build --release
 
+  rust:release-all:
+    desc: "Build release binaries for all supported targets (requires cross-compilation toolchains — see README)"
+    cmds:
+      - cmd: cargo build --release --target aarch64-apple-darwin
+      - cmd: cargo build --release --target x86_64-apple-darwin
+      - cmd: cargo build --release --target x86_64-unknown-linux-gnu
+
   rust:test:
-    desc: "Run Rust tests"
-    dir: rust
+    desc: "Run Rust unit and contract tests"
     cmds:
       - cmd: cargo test
 
+  rust:integration:
+    desc: "Run Rust integration tests (requires a cached model — feature = integration)"
+    cmds:
+      - cmd: cargo test --features integration
+
   rust:clippy:
     desc: "Run Rust clippy with strict warnings"
-    dir: rust
     cmds:
       - cmd: cargo clippy -- -D warnings
+
+  rust:fmt:
+    desc: "Check Rust formatting"
+    cmds:
+      - cmd: cargo fmt --check
+
+  rust:lint:
+    desc: "Run clippy and formatting checks"
+    cmds:
+      - task: rust:clippy
+      - task: rust:fmt
+
+  rust:clean:
+    desc: "Clean Rust build artifacts"
+    cmds:
+      - cmd: cargo clean
 
   #############################################################################
   #
