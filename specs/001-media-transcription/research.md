@@ -317,6 +317,36 @@ at-least-three-models requirement.
 downloaded/cached `files` — it's selected at compile time by `ModelKind`/`features_size` from the
 two vendored assets, never entering the download-and-cache flow at all.
 
+**Correction, 2026-07-11 — vendoring reversed in favor of a build-time fetch**: The decision above
+committed the two `.onnx` files directly into git (`assets/preprocessors/`). This conflicted with
+the repo's own pre-existing `forbid-binary` pre-commit policy (only one prior carve-out existed,
+for `docs/images/`), which is a deliberate constraint, not an oversight — reverted rather than
+carved out a second exception for it.
+
+**Decision**: `build.rs` downloads the same `onnx-asr` PyPI wheel at *build* time (not runtime),
+verifies the wheel's SHA-256 and each extracted file's SHA-256 against the same real values
+recorded above, writes `nemo128.onnx`/`nemo80.onnx` into `OUT_DIR`, and `src/inference/mel.rs`
+embeds them from there via `include_bytes!(concat!(env!("OUT_DIR"), "/nemo128.onnx"))`. This keeps
+every property the vendoring decision was for — zero runtime network calls, no separate
+cache-state tracking for these two files, one static binary at the end — while keeping the git
+repository itself free of committed binaries. It's a direct instance of Constitution Principle
+VII's "fetched automatically at build time" clause, the same mechanism the `ort` crate itself
+already uses (via its `download-binaries` feature) to obtain the ONNX Runtime library — so this
+isn't a new pattern for the build, just the same one applied to a second artifact.
+
+`assets/preprocessors/` (the vendored files, `NOTICE.md`, `LICENSE`) is removed entirely; the
+provenance/license/checksum record that lived in `NOTICE.md` is now inlined as doc comments and
+constants directly in `build.rs`, next to the values it actually checks against.
+
+**Alternatives reconsidered**: Keep vendoring and add a `forbid-binary` exclusion for these two
+files — rejected on reflection; a project-wide "no binaries" policy is exactly the kind of
+constraint that shouldn't grow silent exceptions for convenience. Download at first *use* (runtime)
+via the model manager's existing download/cache machinery — viable, but build-time is strictly
+better here: it guarantees the files exist before the binary can even be produced (no first-run
+network dependency at all, not even a one-time one), and avoids adding these two files to the
+per-model cache-state bookkeeping that section 10's original decision already took pains to keep
+them out of.
+
 ## Summary of changes from the prior technical spec
 
 | Area                                                                 | Prior spec                                                                                      | Resolved here                                                                                                                                                                                                                                               | Why                                                                                                                                                                                  |
@@ -330,3 +360,4 @@ two vendored assets, never entering the download-and-cache flow at all.
 | Progress reporting                                                   | Progress bar (`indicatif`) implied for all downloads; no mention of transcription-time progress | Download progress via `indicatif` (stderr) unchanged; added explicit per-chunk `"transcribing chunk N of M"` stderr output for inputs requiring chunked encoding, none required for single-pass inputs                                                      | Matches spec.md FR-023 clarification, which the prior spec predates                                                                                                                  |
 | Mel spectrogram parameters, tensor names, checksums, chunk threshold | Presented as settled implementation detail                                                      | Explicitly deferred to implementation-time verification                                                                                                                                                                                                     | Constitution Principle V — must be verified against real sources, not asserted at plan time                                                                                          |
 | Mel extraction & tokenizer approach                                  | Hand-rolled `rustfft` DSP + `tokenizers` crate w/ `tokenizer.json`                              | Run the model's own bundled preprocessor `.onnx` graph via `ort`; decode via plain `vocab.txt` lookup, no crate                                                                                                                                             | Neither `tokenizer.json` nor a DSP-verification burden actually exists once the real model files were checked (§10) — `rustfft`, `ndarray`, `tokenizers` all removed from Cargo.toml |
+| Preprocessor graph sourcing                                          | (not addressed in prior draft)                                                                  | `build.rs` downloads + checksum-verifies the `onnx-asr` PyPI wheel at build time, embeds via `include_bytes!` from `OUT_DIR` — not committed to git                                                                                                          | Repo's `forbid-binary` policy rules out vendoring the files directly (§10 addendum, 2026-07-11)                                                                                      |

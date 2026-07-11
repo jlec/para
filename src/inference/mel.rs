@@ -2,13 +2,14 @@ use crate::inference::{Device, ModelKind};
 use anyhow::Context;
 use ort::value::Tensor;
 
-/// Vendored mel-spectrogram preprocessor graphs (research.md §10). Selected by
+/// Mel-spectrogram preprocessor graphs, fetched and checksum-verified by
+/// `build.rs` at build time (never committed to git — the repo's
+/// `forbid-binary` policy) and embedded from `OUT_DIR` here, so there are
+/// zero runtime network calls for them (research.md §10). Selected by
 /// `ModelKind`, not per-model — every TDT model uses the 128-feature graph,
-/// every CTC model the 80-feature graph. No download, no cache state: these
-/// are compiled directly into the binary. Provenance and checksums are
-/// recorded in `assets/preprocessors/NOTICE.md`.
-const NEMO128: &[u8] = include_bytes!("../../assets/preprocessors/nemo128.onnx");
-const NEMO80: &[u8] = include_bytes!("../../assets/preprocessors/nemo80.onnx");
+/// every CTC model the 80-feature graph.
+const NEMO128: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/nemo128.onnx"));
+const NEMO80: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/nemo80.onnx"));
 
 /// Mel-feature output for one input waveform.
 pub struct Features {

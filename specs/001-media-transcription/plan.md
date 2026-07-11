@@ -23,17 +23,23 @@ para is a single-invocation Rust CLI that transcribes a local audio or video fil
 - `tempfile`, `which`, `dirs` (stdin staging, ffmpeg discovery, cache path resolution)
 - `sha2` (checksum verification — Constitution Engineering Standards: prefer well-maintained crates for anything correctness-sensitive, checksums explicitly named)
 
+**Build dependencies** (`[build-dependencies]`, not shipped in the final binary): `reqwest`
+(blocking), `sha2`, `zip` (deflate only) — used solely by `build.rs` to fetch and verify the
+preprocessor graphs described below.
+
 **No mel-DSP or tokenizer crate**: research.md §10 (found while implementing the Foundational
 phase, superseding §4 and §5) established that neither is needed. Mel-spectrogram extraction runs
 through one of two small, shared ONNX graphs (`nemo128.onnx` for TDT models, `nemo80.onnx` for
-CTC) — not reliably hosted per-model on HuggingFace, so vendored directly into the `para` binary
-(`assets/preprocessors/`, loaded via `include_bytes!`) rather than downloaded, sourced from and
-checksummed against the real `onnx-asr` PyPI wheel that publishes them. No `rustfft`/`ndarray` DSP
-implementation to write or verify. Token decoding is a lookup into each model's plain-text
-`vocab.txt` (no `tokenizer.json` exists for this model family) plus the SentencePiece `▁`→space
-convention — no `tokenizers` crate needed. All three (`rustfft`, `ndarray`, `tokenizers`) were
-added then removed from `Cargo.toml` during implementation once this was confirmed against the
-real files.
+CTC) — not reliably hosted per-model on HuggingFace, so `build.rs` downloads and checksum-verifies
+them from the real `onnx-asr` PyPI wheel at build time and writes them to `OUT_DIR`, where
+`src/inference/mel.rs` embeds them via `include_bytes!`. This isn't committed to git (the repo's
+`forbid-binary` policy) but still costs zero runtime network calls — corrected mid-implementation
+from an earlier version of this plan that vendored the files directly into the source tree
+(research.md §10's 2026-07-11 addendum). No `rustfft`/`ndarray` DSP implementation to write or
+verify. Token decoding is a lookup into each model's plain-text `vocab.txt` (no `tokenizer.json`
+exists for this model family) plus the SentencePiece `▁`→space convention — no `tokenizers` crate
+needed. All three (`rustfft`, `ndarray`, `tokenizers`) were added then removed from `Cargo.toml`
+during implementation once this was confirmed against the real files.
 
 **Storage**: Local filesystem only — model cache under the OS cache directory (or `--cache-dir`/`PARA_CACHE_DIR`), no database
 
@@ -96,13 +102,9 @@ para/
 ├── Cargo.toml
 ├── Cargo.lock
 ├── README.md
-├── assets/
-│   └── preprocessors/            # Vendored mel-preprocessor ONNX graphs (research.md §10) — MIT-licensed,
-│                                  # provenance + checksums in NOTICE.md; compiled into the binary via include_bytes!
-│       ├── nemo128.onnx          # TDT models
-│       ├── nemo80.onnx           # CTC models
-│       ├── LICENSE
-│       └── NOTICE.md
+├── build.rs                      # Downloads + checksum-verifies the mel-preprocessor ONNX graphs
+│                                  # (nemo128.onnx, nemo80.onnx) into OUT_DIR at build time — not
+│                                  # committed to git (research.md §10's 2026-07-11 addendum)
 ├── src/
 │   ├── main.rs                  # Entry point; CLI definition (clap); top-level error handling (sole panic/exit boundary)
 │   ├── audio.rs                 # ffmpeg subprocess; format detection (diagnostics only); stdin temp-file staging
@@ -113,7 +115,7 @@ para/
 │   ├── inference/
 │   │   ├── mod.rs               # Re-exports; Transcript and Segment types
 │   │   ├── engine.rs            # ORT session orchestration (preprocessor/encoder/decoder-joint); execution provider selection; chunking for long inputs (FR-023)
-│   │   ├── mel.rs                # Loads and runs the vendored preprocessor ONNX graph (research.md §10) — no hand-rolled DSP, no download
+│   │   ├── mel.rs                # Loads and runs the build-time-fetched preprocessor ONNX graph (research.md §10) — no hand-rolled DSP, no runtime download
 │   │   └── decoder.rs           # TDT greedy decode; CTC greedy decode; token ids → text via vocab.txt lookup
 │   └── output/
 │       ├── mod.rs               # OutputFormat enum; write_transcript dispatch

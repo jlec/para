@@ -70,10 +70,11 @@ the encoder's output — research.md §3).
 
 **Note — the preprocessor is not a `ModelFile`**: mel-spectrogram feature extraction runs through
 one of two small, shared ONNX graphs (`nemo128.onnx` for TDT models, `nemo80.onnx` for CTC —
-selected by `ModelKind`, not per-model-unique) vendored directly into the `para` binary via
-`include_bytes!` rather than downloaded and cached. They never enter the `NotCached`/`Cached`/
-`Downloading` lifecycle described below — they're simply always present, compiled in
-(research.md §10; `assets/preprocessors/NOTICE.md` for provenance and checksums).
+selected by `ModelKind`, not per-model-unique). `build.rs` downloads and checksum-verifies both from
+the real `onnx-asr` PyPI wheel at build time and embeds them into the binary via `include_bytes!`
+from `OUT_DIR` — never committed to git (the repo's `forbid-binary` policy), never downloaded at
+runtime. They never enter the `NotCached`/`Cached`/`Downloading` lifecycle described below — they're
+simply always present, compiled in (research.md §10, including the 2026-07-11 addendum).
 
 **State transitions**: `NotCached → Downloading → Cached` on success; `Downloading → NotCached` on
 any failure (no partially-downloaded file is ever left in place — atomic rename on success only,
