@@ -347,6 +347,24 @@ network dependency at all, not even a one-time one), and avoids adding these two
 per-model cache-state bookkeeping that section 10's original decision already took pains to keep
 them out of.
 
+**Correction, 2026-07-11 — `vocab.txt`'s actual line format, checked while implementing T018**:
+§10's Finding 1 described `vocab.txt` as "a plain newline-delimited list of SentencePiece pieces
+(one per line, line number = token id)" — downloading the real file
+(`istupakov/parakeet-tdt-0.6b-v3-onnx/vocab.txt`, 8193 lines) shows each line is actually
+`<piece> <id>` (space-separated, trailing numeric id), not a bare piece. The id happens to equal
+the 0-based line number for all 8193 lines (verified directly, no mismatches), so the *decoding*
+logic §10 described (look up by id, join, `▁`→space) is still correct — but loading code that
+naively treated the whole line as the piece would embed a trailing `" <n>"` in every piece. Also
+worth recording: the file includes non-speech control tokens (`<unk>`, `<pad>`, per-language
+`<|xx|>` tags, `<|timestamp|>`, etc.) and a blank token `<blk>` at the final id (8192) — the CTC/TDT
+blank used by the decode loop (T022/T030), not part of emitted text.
+
+**Decision**: `src/inference/decoder.rs`'s vocab loader splits each line on the last space to
+recover `(piece, id)`, asserts `id == line_number` (fail loud on a malformed file rather than
+silently misaligning the table), and locates the blank token by name (`<blk>`) rather than
+hardcoding its numeric id, since nothing in the reference implementation guarantees blank is always
+the last entry for every model in the registry.
+
 ## Summary of changes from the prior technical spec
 
 | Area                                                                 | Prior spec                                                                                      | Resolved here                                                                                                                                                                                                                                               | Why                                                                                                                                                                                  |
