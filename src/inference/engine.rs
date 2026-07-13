@@ -25,12 +25,33 @@ fn coreml_capable_target() -> bool {
     cfg!(all(target_os = "macos", target_arch = "aarch64"))
 }
 
-fn execution_providers(device: Device) -> Vec<ExecutionProviderDispatch> {
+/// Directory CoreML caches its compiled models in, so the ~30-60s compile
+/// (Apple Neural Engine) only happens once ever, not on every session load
+/// (`ort`'s `CoreML::with_model_cache_dir` — without it, ORT's own docs say
+/// it "will be compiled and saved to disk on each instantiation of a
+/// session", which is exactly the repeated-compile behavior this fixes).
+/// Shares the same cache root as downloaded models so `--cache-dir`/
+/// `PARA_CACHE_DIR` consistently relocates everything `para` persists.
+fn coreml_cache_dir(cache_dir: Option<&Path>) -> Option<std::path::PathBuf> {
+    let root = crate::model::manager::cache_root(cache_dir).ok()?;
+    let dir = root.join("coreml-cache");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+fn execution_providers(device: Device, cache_dir: Option<&Path>) -> Vec<ExecutionProviderDispatch> {
+    let coreml = || {
+        let mut ep = CoreML::default().with_static_input_shapes(true);
+        if let Some(dir) = coreml_cache_dir(cache_dir) {
+            ep = ep.with_model_cache_dir(dir.to_string_lossy().into_owned());
+        }
+        ep.build()
+    };
     match device {
         Device::Cpu => vec![CPU::default().build()],
-        Device::Coreml => vec![CoreML::default().build()],
+        Device::Coreml => vec![coreml()],
         Device::Auto if coreml_capable_target() => {
-            vec![CoreML::default().build(), CPU::default().build()]
+            vec![coreml(), CPU::default().build()]
         }
         Device::Auto => vec![CPU::default().build()],
     }
@@ -38,11 +59,11 @@ fn execution_providers(device: Device) -> Vec<ExecutionProviderDispatch> {
 
 /// Emits the CoreML first-compile stderr notice at most once per process,
 /// before the session is built, so a user doesn't mistake a silent 30-60s
-/// compile for a hang. Printed whenever CoreML will be attempted at all; it
-/// does not try to detect whether ONNX Runtime's own compilation cache
-/// already has a hit for this exact model, so it may print once even on a
-/// warm-cache repeat run — a deliberate simplification over tracking that
-/// cache's state ourselves.
+/// compile for a hang. Printed whenever CoreML will be attempted at all;
+/// harmless to print on a warm-cache run too (the notice says "first run
+/// only," which is now actually true per-model thanks to `with_model_cache_dir`
+/// above, but this per-process flag doesn't try to detect a cache hit before
+/// printing).
 fn maybe_emit_coreml_notice(device: Device) {
     let will_try_coreml = matches!(device, Device::Coreml)
         || matches!(device, Device::Auto if coreml_capable_target());
@@ -59,11 +80,15 @@ fn maybe_emit_coreml_notice(device: Device) {
 
 /// Builds an ONNX Runtime session from a file on disk (used for the
 /// downloaded encoder/decoder-joint graphs).
-pub fn build_session_from_file(path: &Path, device: Device) -> anyhow::Result<Session> {
+pub fn build_session_from_file(
+    path: &Path,
+    device: Device,
+    cache_dir: Option<&Path>,
+) -> anyhow::Result<Session> {
     maybe_emit_coreml_notice(device);
     Session::builder()
         .context("failed to create ONNX Runtime session builder")?
-        .with_execution_providers(execution_providers(device))
+        .with_execution_providers(execution_providers(device, cache_dir))
         .map_err(|e| anyhow::anyhow!("failed to configure execution providers: {e}"))?
         .commit_from_file(path)
         .with_context(|| format!("failed to load ONNX model: {}", path.display()))
@@ -71,11 +96,15 @@ pub fn build_session_from_file(path: &Path, device: Device) -> anyhow::Result<Se
 
 /// Builds an ONNX Runtime session from an in-memory byte slice (used for the
 /// vendored preprocessor graphs — research.md §10; no file on disk at all).
-pub fn build_session_from_memory(bytes: &[u8], device: Device) -> anyhow::Result<Session> {
+pub fn build_session_from_memory(
+    bytes: &[u8],
+    device: Device,
+    cache_dir: Option<&Path>,
+) -> anyhow::Result<Session> {
     maybe_emit_coreml_notice(device);
     Session::builder()
         .context("failed to create ONNX Runtime session builder")?
-        .with_execution_providers(execution_providers(device))
+        .with_execution_providers(execution_providers(device, cache_dir))
         .map_err(|e| anyhow::anyhow!("failed to configure execution providers: {e}"))?
         .commit_from_memory(bytes)
         .context("failed to load vendored preprocessor model from memory")
@@ -263,8 +292,8 @@ mod tests {
             return;
         }
 
-        let mut preprocessor = mel::Preprocessor::load(ModelKind::Tdt, Device::Cpu).unwrap();
-        let mut encoder = build_session_from_file(&encoder_path, Device::Cpu).unwrap();
+        let mut preprocessor = mel::Preprocessor::load(ModelKind::Tdt, Device::Cpu, None).unwrap();
+        let mut encoder = build_session_from_file(&encoder_path, Device::Cpu, None).unwrap();
 
         let samples = vec![0.0f32; 2 * SAMPLE_RATE];
         let outputs = encode_chunked(&samples, &mut preprocessor, &mut encoder).unwrap();

@@ -62,12 +62,14 @@ fn main() {
 fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    if cli.input.is_none() && std::io::stdin().is_terminal() {
-        anyhow::bail!("no input provided — pass -i <file> or pipe audio to stdin");
-    }
-
+    // Checked first, before the input-required check below: --list-models
+    // is a standalone query (FR-019) and never needs -i/stdin at all.
     if cli.list_models {
         return model::registry::list_models();
+    }
+
+    if cli.input.is_none() && std::io::stdin().is_terminal() {
+        anyhow::bail!("no input provided — pass -i <file> or pipe audio to stdin");
     }
 
     let entry = resolve_model(cli.model.as_deref())?;
@@ -155,13 +157,16 @@ fn run() -> anyhow::Result<()> {
         );
     }
 
-    let mut preprocessor = inference::mel::Preprocessor::load(entry.kind, cli.device)
+    let mut preprocessor = inference::mel::Preprocessor::load(entry.kind, cli.device, cache_dir)
         .context("failed to load mel-spectrogram preprocessor")?;
 
     let encoder_file = find_file(entry, FileRole::Encoder)?;
-    let mut encoder_session =
-        inference::engine::build_session_from_file(&model_dir.join(encoder_file.name), cli.device)
-            .context("failed to load encoder model")?;
+    let mut encoder_session = inference::engine::build_session_from_file(
+        &model_dir.join(encoder_file.name),
+        cli.device,
+        cache_dir,
+    )
+    .context("failed to load encoder model")?;
 
     let transcript = match entry.kind {
         ModelKind::Tdt => {
@@ -169,6 +174,7 @@ fn run() -> anyhow::Result<()> {
             let mut decoder_joint_session = inference::engine::build_session_from_file(
                 &model_dir.join(decoder_joint_file.name),
                 cli.device,
+                cache_dir,
             )
             .context("failed to load decoder-joint model")?;
 

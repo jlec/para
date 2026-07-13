@@ -1,6 +1,7 @@
 use crate::inference::{Device, ModelKind};
 use anyhow::Context;
 use ort::value::Tensor;
+use std::path::Path;
 
 /// Mel-spectrogram preprocessor graphs, fetched and checksum-verified by
 /// `build.rs` at build time (never committed to git — the repo's
@@ -25,12 +26,12 @@ pub struct Preprocessor {
 
 impl Preprocessor {
     /// Loads the preprocessor graph matching `kind`.
-    pub fn load(kind: ModelKind, device: Device) -> anyhow::Result<Self> {
+    pub fn load(kind: ModelKind, device: Device, cache_dir: Option<&Path>) -> anyhow::Result<Self> {
         let bytes = match kind {
             ModelKind::Tdt => NEMO128,
             ModelKind::Ctc => NEMO80,
         };
-        let session = crate::inference::engine::build_session_from_memory(bytes, device)
+        let session = crate::inference::engine::build_session_from_memory(bytes, device, cache_dir)
             .context("failed to load vendored mel-preprocessor graph")?;
         Ok(Self { session })
     }

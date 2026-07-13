@@ -561,6 +561,55 @@ segments (one per token) — rejected, contradicts data-model.md's explicit "not
 (§6), not assumed — 100 mel-frames/sec (10ms hop) × 8x Conformer subsampling = 80ms per encoder
 output frame.
 
+## 13. CoreML was never actually running (found 2026-07-14, user-reported)
+
+**Context**: The user reported that the "compiling model for Apple Neural Engine" notice appeared
+on every run, not just the first, and asked for it to be cached. Investigating turned up something
+more fundamental: CoreML had never actually been active anywhere in this project. `Device::Auto`'s
+"CoreML on darwin/aarch64" behavior (Constitution Principle VI) was never true in practice.
+
+**Finding**: `ort`'s CoreML execution-provider support is gated behind its own `coreml` Cargo
+feature (`ort`'s `Cargo.toml`: `coreml = ["ort-sys/coreml"]`), separate from `download-binaries`.
+This project's `Cargo.toml` only ever enabled `download-binaries` — confirmed directly by adding a
+verbose ORT logger (`SessionBuilder::with_logger`) and searching a full session's log for any
+mention of "coreml": zero, even with `--device coreml` explicitly forced. Every run of `para`, for
+this entire project, has executed on the CPU execution provider only. The "compiling for Apple
+Neural Engine" notice (`engine.rs`'s `maybe_emit_coreml_notice`) fires based purely on `Device` +
+target OS/arch, with no check that CoreML support was actually compiled in — so it printed a
+plausible-sounding but false claim on every run, the exact kind of thing Principle V warns against,
+just discovered after the fact instead of before.
+
+**Decision**: Add `"coreml"` to the `ort` feature list. Once genuinely enabled, `CoreML::default()`
+against the real downloaded `encoder-model.onnx` (which uses external-data storage,
+`encoder-model.onnx.data`) crashed during session init: `!model_path.empty() was false` — a real
+ONNX Runtime CoreML-EP bug interacting with external-data models under dynamic-shape partitioning
+(confirmed via the verbose log: the crash follows CoreML successfully partitioning 888/2115 nodes
+and writing a `0_dynamic_nn` cached model, then failing while placing an initializer). Trying
+`ModelFormat::MLProgram` made it worse — a *different* crash, this time in the small in-memory
+preprocessor graph (`HandleNegativeAxis` out of range). `CoreML::with_static_input_shapes(true)`
+resolved it: CoreML then only claims nodes with fully static shapes, producing 24 real, stable
+`.mlmodelc` partitions for the encoder with no crash, correct transcription output, and (per
+§14 below) a working cache.
+
+**Consequence**: CoreML now only accelerates the static-shaped portion of each graph — the
+genuinely dynamic-length portions (audio/encoder-output time dimension) still run on CPU. This is
+a real, partial win, not a full one; it has not been benchmarked against pure CPU for actual
+speedup on this hardware, only verified for correctness and cache behavior. Revisit if `ort`/ONNX
+Runtime ships a fix for the external-data + dynamic-partition crash, since removing
+`with_static_input_shapes` would let CoreML claim more of the graph.
+
+## 14. CoreML compiled-model caching (fixes the user-reported repeated-compile issue)
+
+**Decision**: `ort`'s `CoreML::with_model_cache_dir(path)` persists the compiled `.mlmodelc`
+artifacts across process runs — per `ort`'s own doc comment, *without* it "the model will be
+compiled and saved to disk on each instantiation of a session." Wired to
+`<cache-root>/coreml-cache` (sharing `--cache-dir`/`PARA_CACHE_DIR`'s root so one flag relocates
+everything `para` persists), created via `fs::create_dir_all` before use. Verified directly: a
+second run's ORT log shows `ModelBuilder: Model is already cached in ... and will be reused` for
+all 24 partitions, `0` fresh `SaveModel` writes — the recompile is now genuinely one-time, not
+per-process. Applied to every session `para` builds (preprocessor, encoder, decoder-joint) since
+all three go through the same `execution_providers`/`build_session_from_*` path.
+
 ## Summary of changes from the prior technical spec
 
 | Area                                                                 | Prior spec                                                                                      | Resolved here                                                                                                                                                                                                                                               | Why                                                                                                                                                                                  |
