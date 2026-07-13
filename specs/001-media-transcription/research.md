@@ -25,6 +25,13 @@ runtime as an extra manual dependency).
 
 ## 2. ONNX Runtime linking strategy (single-binary implications)
 
+> **⚠ SUPERSEDED 2026-07-12 — see "11. ONNX Runtime linking, corrected" below.** This decision was
+> never actually exercised end-to-end (no ONNX session had been created and run anywhere in this
+> codebase until T017's real-encoder test) — once it was, `load-dynamic` + `download-binaries`
+> turned out not to download anything at all, and the runtime fallback path hangs the process
+> instead of erroring. Left in place, unedited, as a record of what was believed and why — see §11
+> for what actually ships and what replaces this decision.
+
 **Decision**: Use `ort`'s `load-dynamic` feature with the `ORT_DYLIB_PATH` escape hatch, and ship
 the resolved `libonnxruntime.dylib`/`.so` alongside the `para` binary in release archives.
 
@@ -103,6 +110,28 @@ names read from the actual ONNX graphs — both are implementation-time (Phase 3
 plan-time guesses. Hardcoding a plausible-looking SHA256 or tensor name now would itself be the
 kind of fabrication Principle V prohibits.
 
+**Resolved for `parakeet-tdt-0.6b-v3`, 2026-07-12 (downloaded for real while implementing T017)**:
+checksums are recorded directly in `src/model/registry.rs` (not duplicated here to avoid a second
+place to drift out of sync). Encoder and decoder-joint tensor names/shapes, read via `onnxruntime`
+introspection of the real files (not assumed), for T022's benefit:
+
+- `encoder-model.onnx` — in: `audio_signal` `[B, 128, T]` f32, `length` `[B]` i64; out: `outputs`
+  `[B, 1024, T']` f32 (`T' = ceil(T/8)`, confirmed empirically — 8x Conformer subsampling),
+  `encoded_lengths` `[B]` i64.
+- `decoder_joint-model.onnx` — in: `encoder_outputs` `[B, 1024, T']` f32, `targets` `[B, U]` i32,
+  `target_length` `[B]` i32, `input_states_1`/`input_states_2` `[2, B, 640]` f32 (LSTM decoder
+  hidden/cell state); out: `outputs` `[B, U', T'', 8198]` f32, `prednet_lengths` `[B]` i32,
+  `output_states_1`/`output_states_2` `[2, B, 640]` f32. The joint output's last dimension (8198)
+  is vocab size (8193, per `vocab.txt` — §10's 2026-07-11 correction) plus 5 TDT duration-head
+  logits (0/1/2/3/4-frame skip), consistent with NeMo's TDT joint network design — not yet
+  independently confirmed against the reference Python decode loop, flagged for T022 to verify
+  before relying on it.
+
+Not yet checked for `parakeet-tdt-0.6b-v2` or `parakeet-ctc-0.6b` (not yet downloaded) — assumed
+structurally identical for v2 (same architecture per this section's decision above) but CTC's
+`model.onnx` has a materially different decode path (no decoder-joint network at all — single
+encoder pass, argmax + blank/repeat collapse) and its tensor names have not been checked at all.
+
 ## 4. Tokenizer crate feature set
 
 > **⚠ SUPERSEDED 2026-07-10 — see "10. ONNX-native preprocessing and vocab-based decoding" below.**
@@ -176,6 +205,35 @@ without empirical grounding. What _is_ fixed here, because it's a clarified requ
 than a technical constant: whenever chunking is used, para emits `"transcribing chunk N of M"` to
 stderr per chunk (spec.md FR-023), and single-pass inputs must not be forced to chunk just to
 produce progress output.
+
+**Found empirically, 2026-07-11 (implementing T017), against the real downloaded
+`parakeet-tdt-0.6b-v3` encoder**: this isn't a soft memory/latency tradeoff — the encoder throws a
+genuine `ort` runtime error past a fixed input length, from a fixed-size relative positional
+encoding buffer baked into the graph (`/layers.0/self_attn/Add_2`, an `ort` broadcast error whose
+message reports `(L-5000) by L` for any encoder-output length `L > 5001` — confirmed a hard cutoff,
+not a fluke, by binary search directly on the encoder's `audio_signal` input: length 5001 succeeds,
+5002 fails, every time). Encoder-output length `L` relates to the preprocessor's mel-frame count
+`T` by `L = ceil(T/8)` (measured directly: 8x Conformer subsampling), and the bundled `nemo128.onnx`
+preprocessor produces mel frames at exactly 100/sec (10ms hop — measured by running it on 1s/10s/60s
+of synthetic audio, confirming the plausible-but-unverified 10ms figure §5 had explicitly declined
+to assert). Composing these: the encoder accepts at most `T = 40008` mel frames in one pass, i.e.
+**at most ~400.08 seconds (6m40s) of audio per single-pass encoder call** for this model.
+
+**Decision**: Set the chunk threshold at 300 seconds (5 minutes) of audio — comfortably under the
+measured ~400s hard cutoff, leaving margin for `parakeet-tdt-0.6b-v2` (same architecture/size per
+§3, assumed to share this cutoff, not yet independently verified) and for `parakeet-ctc-0.6b` (not
+yet downloaded at this writing; CTC's encoder may have a different or absent positional-encoding
+cutoff, so 300s is a conservative default applied uniformly across all three models rather than a
+per-model-tuned value — revisit once the CTC encoder is downloaded and can be checked the same way).
+No overlap between chunks: FR-023 only requires ordered per-chunk progress output, not
+overlap-and-merge stitching, and the prior spec didn't call for one either.
+
+**Alternatives considered**: A threshold close to the measured 400s cutoff (e.g. 390s) — rejected,
+too little margin for a model (CTC) whose actual limit hasn't been checked yet, and for encoder
+timing/memory variance already observed to grow non-linearly as length approaches the cutoff (300s
+single-pass took ~38s wall-clock on CPU in this environment; measured for context, not committed to
+as a performance guarantee — research.md's Performance Goals section already declines to commit to
+absolute timing figures).
 
 ## 7. Download retry and backoff (FR-022)
 
@@ -365,11 +423,72 @@ silently misaligning the table), and locates the blank token by name (`<blk>`) r
 hardcoding its numeric id, since nothing in the reference implementation guarantees blank is always
 the last entry for every model in the registry.
 
+## 11. ONNX Runtime linking, corrected (found 2026-07-12, first real session execution)
+
+**Context**: T017 needed a real encoder loaded and run to determine the chunking threshold (§6).
+This was the first point in the project where any code actually called `ort::session::Session`
+against a real model, rather than just compiling against the API — everything up to this point
+(T015/T016) had been verified by reading `ort`'s source and docs, per Constitution Principle V, but
+not by actually running a session. Doing so surfaced two compounding problems with §2's decision.
+
+**Finding 1 — `download-binaries` silently does nothing when combined with `load-dynamic`**:
+Reading `ort-sys` 2.0.0-rc.12's real `build/main.rs` (not assumed — the installed crate source in
+`~/.cargo/registry`) shows its very first check is `if env::var("DOCS_RS").is_ok() ||
+cfg!(feature = "disable-linking") { return; }`, and `ort`'s `Cargo.toml` shows `load-dynamic`
+enables `ort-sys/disable-linking`. So with both features on (§2's decision), the entire
+download-prebuilt-binaries-and-link block in `ort-sys`'s build script never runs — confirmed
+directly: after a full `cargo build`, `ort-sys`'s own `OUT_DIR` was empty and no `.dylib` existed
+anywhere under this project's `target/` or cargo registry cache. §2's claim that "the ONNX Runtime
+shared library is fetched automatically at build time" was never actually true for this feature
+combination; it was an inference from `ort`'s docs, not a checked fact, and nothing in the
+Foundational phase's build/test/clippy/fmt gates would have caught it, since none of them create an
+actual `ort::session::Session`.
+
+**Finding 2 — the resulting failure mode is a hang, not an error**: With no dylib available and no
+`ORT_DYLIB_PATH` set, `Session::builder()` (called from `mel::Preprocessor::load`, itself called
+from a new `#[ignore]`d test exercising `encode_chunked` against the real downloaded encoder)
+hung indefinitely rather than returning `Err`. `sample`(1) against the stuck process's stack showed
+the real cause: `ort::load_dylib_from_path` fails to find the library, and constructing the
+resulting `ort::error::Error` recursively calls back into `ort::api()`, which tries to acquire the
+*same* `OnceLock` that is still in the middle of being initialized by the outer call — a genuine
+self-deadlock inside `ort` 2.0.0-rc.12 itself (confirmed via the actual stack trace, not
+speculation), not a bug in this codebase. This matters beyond just this project: Constitution
+Principle IV ("fail loud, fail fast") would have been silently violated by a missing dylib turning
+into a silent hang instead of a clear startup error, if `load-dynamic` had been kept.
+
+**Decision**: Drop the `load-dynamic` feature; keep `download-binaries` alone. Without
+`disable-linking`, `ort-sys`'s build script runs its full path: it downloads a real, checksum-verified
+prebuilt ONNX Runtime archive into the OS cache directory
+(`~/Library/Caches/ort.pyke.io/dfbin/<target>/<hash>/`, confirmed to contain a genuine
+`libonnxruntime.a`, ~81MB) at *build* time and links it in **statically**
+(`cargo:rustc-link-lib=static=onnxruntime`) — verified by re-running the same `#[ignore]`d test,
+which now loads the preprocessor, loads the real encoder, and runs `encode_chunked` successfully in
+under 3 seconds. This is a strictly better outcome than §2's original decision, not just a bug
+workaround: it's true static linking (not "close to" it), it eliminates the "two-file distribution"
+caveat entirely (a `cargo build --release` binary needs no co-located dylib at all), and it removes
+the buggy runtime dlopen path from the picture altogether — Constitution Principle VII's "statically
+linked **or** fetched automatically at build time" is satisfied by literally both halves
+simultaneously, the same way `build.rs`'s own preprocessor-graph fetch already works (§10).
+
+**Consequence for `plan.md`**: the Technical Context's ORT linking note and the Constitution Check's
+Principle VII row both described a two-file (executable + dylib) release; neither is accurate
+anymore. Updated to reflect single-binary static linking with no packaging caveat. The
+`ORT_DYLIB_PATH` escape hatch section of the planned README (§9-adjacent) is no longer needed for
+the primary path — the crate falls back to it automatically only if a fully custom/offline ONNX
+Runtime build is supplied via `ort-sys`'s `ORT_LIB_LOCATION`/system-lib mechanism, which remains
+available but is no longer the documented default story.
+
+**Alternatives considered**: Keep `load-dynamic` and have `build.rs` download the platform dylib
+itself (mirroring the mel-preprocessor pattern) and set `ORT_DYLIB_PATH` — rejected, this would
+duplicate logic `ort-sys`'s own build script already provides once `disable-linking` isn't forced,
+for no benefit, and would still leave the reentrant-deadlock bug live as a landmine for any future
+misconfiguration (e.g. a wrong path) that hits the same missing-dylib code path.
+
 ## Summary of changes from the prior technical spec
 
 | Area                                                                 | Prior spec                                                                                      | Resolved here                                                                                                                                                                                                                                               | Why                                                                                                                                                                                  |
 | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| ORT linking                                                          | `download-binaries` + `copy-dylibs` implied near-single-binary                                  | `load-dynamic` + `ORT_DYLIB_PATH`, dylib shipped alongside the binary in releases                                                                                                                                                                           | `copy-dylibs` is a dev-convenience for `cargo run`, not a distribution strategy; verified against `ort`'s own linking docs                                                           |
+| ORT linking                                                          | `download-binaries` + `copy-dylibs` implied near-single-binary                                  | `download-binaries` alone: real static linking, single-binary output, no dylib to ship — corrected again after `load-dynamic` (an intermediate decision) turned out to silently disable the build-time fetch and hang instead of erroring when run for real (§11) | `copy-dylibs` is a dev-convenience for `cargo run`, not a distribution strategy; §2's `load-dynamic` follow-up was never actually run until T017, which is when its real behavior surfaced |
 | `ort` API code samples                                               | 1.x-style `Environment`/`ExecutionProvider::CoreML(...)`                                        | Re-derive from docs.rs for the pinned version at implementation time                                                                                                                                                                                        | Prior sample is 1.x API; 2.x has moved the execution-provider module at least once across RCs                                                                                        |
 | `tokenizers` features                                                | `default-features = false, features = ["onig"]`                                                 | Full defaults kept (`onig` included) — corrected mid-implementation after finding `onig` is actually a _default_ feature of this crate, not opt-in as first assumed; dropping it is deferred until the real tokenizer.json's pretokenizer type is inspected | Avoid repeating an unverified claim in the opposite direction (§4)                                                                                                                   |
 | Model management scope                                               | Implicit only in the narrative goals                                                            | Listing + `--refresh-model` explicitly in scope; standalone remove explicitly out of scope                                                                                                                                                                  | Matches spec.md clarification session, not assumed                                                                                                                                   |

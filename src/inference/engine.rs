@@ -1,9 +1,21 @@
 use crate::inference::Device;
+use crate::inference::mel::{self, Features};
 use anyhow::Context;
 use ort::ep::{CPU, CoreML, ExecutionProviderDispatch};
 use ort::session::Session;
+use ort::value::Tensor;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Audio sample rate throughout this pipeline (16 kHz mono — `audio.rs` transcodes to this).
+const SAMPLE_RATE: usize = 16_000;
+
+/// Single-pass chunk length, in seconds (research.md §6). Set well under the
+/// empirically-found ~400s hard cutoff (a fixed-size relative positional
+/// encoding buffer inside the TDT encoder graph), with margin for models that
+/// haven't been checked the same way yet.
+const CHUNK_SECONDS: f64 = 300.0;
 
 static COREML_NOTICE_SHOWN: AtomicBool = AtomicBool::new(false);
 
@@ -67,4 +79,146 @@ pub fn build_session_from_memory(bytes: &[u8], device: Device) -> anyhow::Result
         .map_err(|e| anyhow::anyhow!("failed to configure execution providers: {e}"))?
         .commit_from_memory(bytes)
         .context("failed to load vendored preprocessor model from memory")
+}
+
+/// One chunk's encoder output: a `(1, hidden_size, frames)` tensor flattened
+/// row-major, plus its dimensions.
+pub struct EncoderOutput {
+    pub data: Vec<f32>,
+    pub hidden_size: usize,
+    pub frames: usize,
+}
+
+/// Splits `total_samples` into sequential, non-overlapping ranges of at most
+/// `CHUNK_SECONDS` each (research.md §6). Returns a single range spanning the
+/// whole input when it fits in one chunk — single-pass inputs are never
+/// forced to chunk just to produce progress output (FR-023).
+fn chunk_ranges(total_samples: usize) -> Vec<Range<usize>> {
+    let chunk_len = (CHUNK_SECONDS * SAMPLE_RATE as f64) as usize;
+    if total_samples <= chunk_len {
+        // A single range representing the whole (unchunked) input, not a
+        // sequence of per-sample ranges -- clippy's suggested rewrite would
+        // change the meaning here.
+        #[allow(clippy::single_range_in_vec_init)]
+        return vec![0..total_samples];
+    }
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    while start < total_samples {
+        let end = (start + chunk_len).min(total_samples);
+        ranges.push(start..end);
+        start = end;
+    }
+    ranges
+}
+
+/// Runs the encoder session on one chunk's mel features.
+fn run_encoder(session: &mut Session, features: &Features) -> anyhow::Result<EncoderOutput> {
+    let audio_signal = Tensor::from_array((
+        [1usize, features.feature_size, features.frames],
+        features.data.clone(),
+    ))?;
+    let length = Tensor::from_array(([1usize], vec![features.frames as i64]))?;
+    let outputs = session.run(ort::inputs![
+        "audio_signal" => audio_signal,
+        "length" => length,
+    ])?;
+    let (shape, data) = outputs["outputs"].try_extract_tensor::<f32>()?;
+    Ok(EncoderOutput {
+        data: data.to_vec(),
+        hidden_size: shape[1] as usize,
+        frames: shape[2] as usize,
+    })
+}
+
+/// Runs the full preprocessor-then-encoder pass over `samples`, splitting
+/// into chunks per [`chunk_ranges`] and emitting `"transcribing chunk N of
+/// M"` to stderr for each chunk when more than one is needed (FR-023).
+pub fn encode_chunked(
+    samples: &[f32],
+    preprocessor: &mut mel::Preprocessor,
+    encoder: &mut Session,
+) -> anyhow::Result<Vec<EncoderOutput>> {
+    let ranges = chunk_ranges(samples.len());
+    let total = ranges.len();
+    ranges
+        .into_iter()
+        .enumerate()
+        .map(|(i, range)| {
+            if total > 1 {
+                eprintln!("transcribing chunk {} of {total}", i + 1);
+            }
+            let features = preprocessor.extract(&samples[range])?;
+            run_encoder(encoder, &features)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_chunk_for_input_under_threshold() {
+        let ranges = chunk_ranges(100 * SAMPLE_RATE);
+        assert_eq!(ranges, vec![0..100 * SAMPLE_RATE]);
+    }
+
+    #[test]
+    fn splits_into_multiple_chunks_over_threshold() {
+        let total = (CHUNK_SECONDS as usize + 60) * SAMPLE_RATE;
+        let ranges = chunk_ranges(total);
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(ranges[0], 0..(CHUNK_SECONDS as usize * SAMPLE_RATE));
+        assert_eq!(ranges[1], (CHUNK_SECONDS as usize * SAMPLE_RATE)..total);
+    }
+
+    #[test]
+    fn chunk_ranges_cover_input_with_no_gaps_or_overlap() {
+        let total = (2.0 * CHUNK_SECONDS) as usize * SAMPLE_RATE + 12345;
+        let ranges = chunk_ranges(total);
+        assert_eq!(ranges[0].start, 0);
+        assert_eq!(ranges.last().unwrap().end, total);
+        for pair in ranges.windows(2) {
+            assert_eq!(pair[0].end, pair[1].start);
+        }
+    }
+
+    #[test]
+    fn exact_multiple_of_chunk_length_does_not_add_empty_trailing_chunk() {
+        let total = CHUNK_SECONDS as usize * SAMPLE_RATE;
+        let ranges = chunk_ranges(total);
+        assert_eq!(ranges, vec![0..total]);
+    }
+
+    /// Exercises `encode_chunked` against the real, live-downloaded
+    /// `parakeet-tdt-0.6b-v3` encoder in the default cache location. Skipped
+    /// (not failed) when the model isn't cached, since this repo's own
+    /// automated checks don't download multi-GB model files -- run
+    /// explicitly with `cargo test -- --ignored` after a real `ensure_cached`
+    /// (or manual download) has populated the cache.
+    #[test]
+    #[ignore = "requires the real ~2.5GB parakeet-tdt-0.6b-v3 model in the local cache"]
+    fn encode_chunked_runs_against_the_real_encoder() {
+        use crate::inference::ModelKind;
+
+        let Some(cache_dir) = dirs::cache_dir() else {
+            return;
+        };
+        let model_dir = cache_dir.join("para/models/parakeet-tdt-0.6b-v3");
+        let encoder_path = model_dir.join("encoder-model.onnx");
+        if !encoder_path.exists() {
+            return;
+        }
+
+        let mut preprocessor = mel::Preprocessor::load(ModelKind::Tdt, Device::Cpu).unwrap();
+        let mut encoder = build_session_from_file(&encoder_path, Device::Cpu).unwrap();
+
+        let samples = vec![0.0f32; 2 * SAMPLE_RATE];
+        let outputs = encode_chunked(&samples, &mut preprocessor, &mut encoder).unwrap();
+
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].hidden_size, 1024);
+        assert!(outputs[0].frames > 0);
+    }
 }

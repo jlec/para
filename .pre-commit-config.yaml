@@ -6,6 +6,7 @@ default_language_version:
 default_stages: [pre-commit]
 exclude: >
   (?x)^(
+  Cargo\.lock|
   .specify|
   .ansible|
   .beads|
