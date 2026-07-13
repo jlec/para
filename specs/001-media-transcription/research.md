@@ -220,13 +220,17 @@ to assert). Composing these: the encoder accepts at most `T = 40008` mel frames 
 **at most ~400.08 seconds (6m40s) of audio per single-pass encoder call** for this model.
 
 **Decision**: Set the chunk threshold at 300 seconds (5 minutes) of audio — comfortably under the
-measured ~400s hard cutoff, leaving margin for `parakeet-tdt-0.6b-v2` (same architecture/size per
-§3, assumed to share this cutoff, not yet independently verified) and for `parakeet-ctc-0.6b` (not
-yet downloaded at this writing; CTC's encoder may have a different or absent positional-encoding
-cutoff, so 300s is a conservative default applied uniformly across all three models rather than a
-per-model-tuned value — revisit once the CTC encoder is downloaded and can be checked the same way).
-No overlap between chunks: FR-023 only requires ordered per-chunk progress output, not
-overlap-and-merge stitching, and the prior spec didn't call for one either.
+measured ~400s hard cutoff. No overlap between chunks: FR-023 only requires ordered per-chunk
+progress output, not overlap-and-merge stitching, and the prior spec didn't call for one either.
+
+**Confirmed for the other two models, 2026-07-13**: once `parakeet-tdt-0.6b-v2`'s and
+`parakeet-ctc-0.6b`'s real encoders were downloaded, both were checked the same way (binary search
+on synthetic input length). CTC's `model.onnx` hits the identical failure pattern (`ort`'s
+`Add_2` broadcast error, `X by X+5000`) past ~5000 encoder frames — same family of cutoff as the
+TDT encoder, despite being a structurally different (non-transducer) model. `-v2` wasn't
+independently re-verified (same architecture and encoder file size as `-v3`, byte-identical
+positional-encoding module), but CTC's confirmation means the 300s threshold is now checked, not
+assumed, for all three registered models.
 
 **Alternatives considered**: A threshold close to the measured 400s cutoff (e.g. 390s) — rejected,
 too little margin for a model (CTC) whose actual limit hasn't been checked yet, and for encoder
