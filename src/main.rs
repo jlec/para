@@ -1,17 +1,12 @@
-// TODO(T024): remove once run() wires audio/model/inference/output together
-// into a full transcription pipeline (User Story 1) — until then, most
-// Foundational-phase functions have no caller yet, which is expected, not a
-// bug (tasks.md's own Foundational checkpoint: "no transcript can be
-// produced yet").
-#![allow(dead_code)]
-
 mod audio;
 mod inference;
 mod model;
 mod output;
 
+use anyhow::Context;
 use clap::Parser;
-use inference::Device;
+use inference::{Device, ModelKind, Transcript};
+use model::registry::{FileRole, ModelEntry};
 use output::OutputFormat;
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -75,10 +70,179 @@ fn run() -> anyhow::Result<()> {
         return model::registry::list_models();
     }
 
-    // Full transcription wiring (input -> audio -> model -> engine -> decoder
-    // -> output) lands in the User Story 1 implementation phase (T022-T025);
-    // the Foundational phase only needs each piece to compile and unit-test
-    // in isolation.
-    let _ = (cli.output, cli.model, cli.cache_dir, cli.refresh_model);
-    anyhow::bail!("transcription pipeline not yet wired up (Foundational phase in progress)")
+    let entry = resolve_model(cli.model.as_deref())?;
+
+    // Open the output destination up front, before any expensive work — an
+    // unwritable path (no permission, no such directory) should fail as
+    // fast as a bad input path, not only after a full transcription
+    // completes (FR-024, Constitution Principle IV).
+    let mut output_sink = match &cli.output {
+        Some(path) => Some(
+            std::fs::File::create(path)
+                .with_context(|| format!("cannot write output file: {}", path.display()))?,
+        ),
+        None => None,
+    };
+
+    // Resolve and validate input *before* the (potentially multi-GB) model
+    // download — a bad path or unusable file should fail fast (FR-015,
+    // Constitution Principle IV) without first waiting on a download the
+    // user didn't need. `_stdin_guard` keeps the staged temp file alive
+    // until `run()` returns.
+    let (input_path, _stdin_guard) = match &cli.input {
+        Some(path) => (path.clone(), None),
+        None => {
+            let staged = audio::stage_stdin()?;
+            let path = staged.path().to_path_buf();
+            (path, Some(staged))
+        }
+    };
+
+    // Diagnostics only — an unrecognized header never blocks the run
+    // (FR-001's Assumption: ffmpeg gets the final say on whether it can
+    // decode a format, not this magic-byte sniff).
+    if let Ok(mut file) = std::fs::File::open(&input_path) {
+        let mut header = [0u8; 12];
+        if std::io::Read::read_exact(&mut file, &mut header).is_ok()
+            && audio::detect_format(&header).is_none()
+        {
+            eprintln!(
+                "note: could not identify input format from its header, attempting anyway: {}",
+                input_path.display()
+            );
+        }
+    }
+
+    let probe = audio::probe(&input_path)
+        .map_err(|e| anyhow::anyhow!("{e:#}"))
+        .with_context(|| format!("input not usable: {}", input_path.display()))?;
+    if !probe.has_audio_track {
+        anyhow::bail!(
+            "input has no audio track: {} (FR-015)",
+            input_path.display()
+        );
+    }
+
+    let wav_file = tempfile::NamedTempFile::new()
+        .context("failed to create temp file for transcoded audio")?;
+    audio::transcode_to_wav(&input_path, wav_file.path())?;
+    let samples = audio::read_wav_samples(wav_file.path())?;
+
+    eprintln!("using model: {}", entry.id);
+
+    let cache_dir = cli.cache_dir.as_deref();
+    let model_dir = if cli.refresh_model {
+        model::manager::refresh(entry, cache_dir)
+    } else {
+        model::manager::ensure_cached(entry, cache_dir)
+    }
+    .with_context(|| format!("failed to prepare model {}", entry.id))?;
+
+    let vocab_path = model_dir.join(find_file(entry, FileRole::Vocab)?.name);
+    let vocab = inference::decoder::Vocab::load(&vocab_path)?;
+    anyhow::ensure!(
+        !vocab.is_empty(),
+        "vocab file is empty: {}",
+        vocab_path.display()
+    );
+
+    if entry.timing_granularity == model::registry::TimingGranularity::WholeFile
+        && matches!(cli.format, OutputFormat::Json | OutputFormat::Srt)
+    {
+        eprintln!(
+            "note: {} produces whole-file timing only, not per-phrase timestamps",
+            entry.id
+        );
+    }
+
+    let mut preprocessor = inference::mel::Preprocessor::load(entry.kind, cli.device)
+        .context("failed to load mel-spectrogram preprocessor")?;
+
+    let encoder_file = find_file(entry, FileRole::Encoder)?;
+    let mut encoder_session =
+        inference::engine::build_session_from_file(&model_dir.join(encoder_file.name), cli.device)
+            .context("failed to load encoder model")?;
+
+    let transcript = match entry.kind {
+        ModelKind::Tdt => {
+            let decoder_joint_file = find_file(entry, FileRole::DecoderJoint)?;
+            let mut decoder_joint_session = inference::engine::build_session_from_file(
+                &model_dir.join(decoder_joint_file.name),
+                cli.device,
+            )
+            .context("failed to load decoder-joint model")?;
+
+            let chunks = inference::engine::encode_chunked(
+                &samples,
+                &mut preprocessor,
+                &mut encoder_session,
+            )?;
+            inference::decoder::decode_tdt(
+                &chunks,
+                &mut decoder_joint_session,
+                &vocab,
+                entry.id,
+                probe.duration_secs,
+            )?
+        }
+        ModelKind::Ctc => {
+            let chunks = inference::engine::encode_chunked_ctc(
+                &samples,
+                &mut preprocessor,
+                &mut encoder_session,
+            )?;
+            inference::decoder::decode_ctc(&chunks, &vocab, entry.id, probe.duration_secs)?
+        }
+    };
+
+    write_output(&cli, &transcript, output_sink.as_mut())
+}
+
+/// Resolves `--model` (or `PARA_MODEL`) against the registry, or the default
+/// model when unset. An unrecognized id fails immediately with the list of
+/// valid ids — never a silent substitution (FR-010).
+fn resolve_model(requested: Option<&str>) -> anyhow::Result<&'static ModelEntry> {
+    match requested {
+        None => Ok(model::registry::default_model()),
+        Some(id) => model::registry::find(id).ok_or_else(|| {
+            let valid: Vec<_> = model::registry::MODELS.iter().map(|m| m.id).collect();
+            anyhow::anyhow!("unknown model {id:?} — valid options: {}", valid.join(", "))
+        }),
+    }
+}
+
+fn find_file(
+    entry: &'static ModelEntry,
+    role: FileRole,
+) -> anyhow::Result<&'static model::registry::ModelFile> {
+    entry
+        .files
+        .iter()
+        .find(|f| f.role == role)
+        .ok_or_else(|| anyhow::anyhow!("model {} has no file with role {role:?}", entry.id))
+}
+
+/// Writes `transcript` to stdout or `-o <file>` (FR-011). A file that can't
+/// be created/written (no permission, no disk space) fails loud with a
+/// specific error rather than a silent partial write (FR-024).
+fn write_output(
+    cli: &Cli,
+    transcript: &Transcript,
+    output_sink: Option<&mut std::fs::File>,
+) -> anyhow::Result<()> {
+    match output_sink {
+        None => {
+            let stdout = std::io::stdout();
+            let mut lock = stdout.lock();
+            output::write_transcript(cli.format, transcript, &mut lock)
+        }
+        Some(file) => {
+            let path = cli
+                .output
+                .as_deref()
+                .expect("output_sink implies -o was set");
+            output::write_transcript(cli.format, transcript, file)
+                .with_context(|| format!("failed writing output file: {}", path.display()))
+        }
+    }
 }

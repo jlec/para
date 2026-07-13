@@ -251,6 +251,24 @@ clear error they need to act on).
 (Principle IV) for the common case of a user who is simply offline and needs to know that
 immediately-ish, not after an indefinite hang.
 
+**Correction, 2026-07-13 — cache-state checksum re-verification was a real performance bug**:
+`cache_state_in` (T011) originally re-hashed every file with a known checksum on *every* call, not
+just after a download. This went unnoticed through the whole Foundational phase because every
+registry entry's `sha256` was still `None` until T010's real checksums landed (§3's addendum) — a
+`None` checksum skips the hash check entirely, so the cost never showed up until all three models
+had real checksums and `--list-models` was actually run end-to-end for the first time: **79 seconds**
+to list three models, entirely spent re-hashing ~7GB of encoder/decoder weights that hadn't changed
+since the last run.
+
+**Decision**: `cache_state_in` now checks file existence only. Checksum verification stays exactly
+where it already correctly was — `download_one`, immediately after a fresh download and before the
+atomic rename into place — which is the one point where a checksum mismatch is actually possible
+(a corrupted or truncated transfer) and actionable (retry). Once a file is at its final cached path,
+existence is sufficient evidence it's the same file `download_one` verified; `--refresh-model` is
+the explicit, user-initiated path for a full re-verify-by-re-download. This is the same trust model
+package managers and Docker use (verify once at fetch time, trust the cache after) rather than an
+invented shortcut.
+
 ## 8. Error handling strategy
 
 **Decision**: `anyhow` for propagation and the top-level `main` handler (single `eprintln!` +
@@ -484,6 +502,61 @@ duplicate logic `ort-sys`'s own build script already provides once `disable-link
 for no benefit, and would still leave the reentrant-deadlock bug live as a landmine for any future
 misconfiguration (e.g. a wrong path) that hits the same missing-dylib code path.
 
+## 12. TDT/CTC decode algorithms and segment grouping (T022/T030, 2026-07-13)
+
+**Decision**: Implement both greedy decoders by directly porting the reference `onnx-asr` Python
+source (`onnx_asr/models/nemo.py`'s `NemoConformerTdt`/`NemoConformerRnnt`/`NemoConformerCtc`, and
+`onnx_asr/asr.py`'s `_AsrWithTransducerDecoding`/`_AsrWithCtcDecoding`), fetched and read directly
+from GitHub — not re-derived from tensor shapes alone (Constitution Principle V). Both were then
+verified against real speech generated with macOS `say`, not just structurally (shapes/no-panic)
+but for actual transcription correctness.
+
+**TDT decode** (`decode_tdt_chunk` in `src/inference/decoder.rs`): per encoder frame `t`, run the
+decoder-joint network on that single frame plus the previously-emitted token and LSTM state,
+producing `vocab_size + 5` joint logits — the first `vocab_size` are token logits, the last 5 are
+duration-class logits (0..=4 encoder frames to skip). Argmax each independently. If the token isn't
+blank, emit it and advance the LSTM state/previous-token to reflect it (blank never advances
+decoder state — matches the reference `_decode` skipping the state update on a blank in the RNNT
+base class, since TDT only overrides which logits get argmax'd, not the state-advance logic). If
+the duration argmax is `> 0`, advance `t` by that amount regardless of whether a token was just
+emitted; if it's `0`, only advance `t` by 1 when the token was blank or a per-frame safety cap
+(`MAX_TOKENS_PER_STEP = 10`, matching the reference's `max_tokens_per_step` default) is hit —
+otherwise stay at the same frame and decode again, which is how TDT can emit multiple sub-word
+tokens from one 80ms encoder frame. Verified end-to-end: a 3.6s real speech clip transcribed with
+only one substitution error (a proper noun, "ParaKey" for "parakeet") across three different real
+models (`-v3`, `-v2`, and the CTC tier).
+
+**CTC decode** (`decode_ctc_chunk`): per-frame argmax over the `logprobs` tensor, dropping blank
+frames and collapsing consecutive repeats (a token is kept only if it differs from blank and from
+the immediately preceding frame's raw argmax, using blank as the initial "previous" sentinel) — the
+standard CTC greedy-decode collapse rule, matching the reference `_AsrWithCtcDecoding._decoding`
+exactly (`np.diff(...) != 0`, prepended with blank).
+
+**Segment grouping is this project's own design decision, not the reference library's**: the
+`onnx-asr` public API (`recognize_batch`) only ever returns a flat token stream with per-token
+timestamps — it has no concept of "segments" at all. data-model.md's `Segment` (phrase/sentence,
+not word-level) has to come from somewhere for FR-005/006/US4. Implemented as a silence-gap
+heuristic (`group_into_segments`): split into a new segment wherever the gap between two
+consecutive emitted tokens' encoder frames exceeds `SEGMENT_GAP_SECONDS = 1.5s`. Verified against a
+real 2-second embedded silence (`say`'s `[[slnc 2000]]`) — correctly splits into two segments with
+contiguous, non-overlapping boundaries. A shorter, more typical inter-word gap (tested with `say`'s
+own natural pacing between sentences, no explicit silence command) did *not* reliably trigger a
+split, meaning multi-sentence audio without an unusually long pause currently comes back as one
+segment — acceptable per data-model.md's "phrase/sentence... not word-level" wording (still
+ordered/non-overlapping/`end > start`), but a real limitation to note: this heuristic doesn't use
+punctuation (the vocab does emit periods/commas) as a secondary segmentation signal. Left as a
+known simplification rather than an invented "smarter" heuristic with no empirical grounding.
+
+**Alternatives considered**: Punctuation-based segmentation (split after `.`/`!`/`?`) — not
+implemented; would need to inspect decoded text rather than only frame timestamps, and combining
+both signals correctly (e.g. a period immediately followed by more speech within the gap window)
+adds complexity not obviously justified without a concrete failing case driving it. Word-level
+segments (one per token) — rejected, contradicts data-model.md's explicit "not word-level" note.
+
+**Frame-to-seconds conversion** used throughout (`ENCODER_FRAME_SECONDS = 0.08`): measured directly
+(§6), not assumed — 100 mel-frames/sec (10ms hop) × 8x Conformer subsampling = 80ms per encoder
+output frame.
+
 ## Summary of changes from the prior technical spec
 
 | Area                                                                 | Prior spec                                                                                      | Resolved here                                                                                                                                                                                                                                               | Why                                                                                                                                                                                  |
@@ -498,3 +571,5 @@ misconfiguration (e.g. a wrong path) that hits the same missing-dylib code path.
 | Mel spectrogram parameters, tensor names, checksums, chunk threshold | Presented as settled implementation detail                                                      | Explicitly deferred to implementation-time verification                                                                                                                                                                                                     | Constitution Principle V — must be verified against real sources, not asserted at plan time                                                                                          |
 | Mel extraction & tokenizer approach                                  | Hand-rolled `rustfft` DSP + `tokenizers` crate w/ `tokenizer.json`                              | Run the model's own bundled preprocessor `.onnx` graph via `ort`; decode via plain `vocab.txt` lookup, no crate                                                                                                                                             | Neither `tokenizer.json` nor a DSP-verification burden actually exists once the real model files were checked (§10) — `rustfft`, `ndarray`, `tokenizers` all removed from Cargo.toml |
 | Preprocessor graph sourcing                                          | (not addressed in prior draft)                                                                  | `build.rs` downloads + checksum-verifies the `onnx-asr` PyPI wheel at build time, embeds via `include_bytes!` from `OUT_DIR` — not committed to git                                                                                                          | Repo's `forbid-binary` policy rules out vendoring the files directly (§10 addendum, 2026-07-11)                                                                                      |
+| TDT/CTC decode algorithm and segment grouping                        | Presented as settled implementation detail, no segment-grouping strategy specified              | Ported directly from the real `onnx-asr` Python source; segment grouping is a new, project-owned silence-gap heuristic since the reference library has no concept of segments at all             | §12 — Constitution Principle V; verified end-to-end against real speech, not just structurally                                                                                       |
+| ORT linking (final)                                                  | (see earlier row)                                                                                | `download-binaries` alone — real static linking, no dylib, no `load-dynamic` reentrant-deadlock landmine                                                                                                                                                   | §11 — the `load-dynamic` intermediate decision was never actually run until T017                                                                                                     |

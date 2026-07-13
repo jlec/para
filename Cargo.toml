@@ -5,6 +5,19 @@ edition = "2024"
 description = "Parakeet STT cli"
 repository = "https://github.com/jlec/para"
 license = "Apache-2.0"
+# tests/support.rs is a shared helper module included via #[path] from
+# contract.rs/integration.rs, not a standalone test file -- explicit [[test]]
+# targets below replace directory auto-discovery so it isn't also compiled
+# as its own (empty) test binary.
+autotests = false
+
+[[test]]
+name = "contract"
+path = "tests/contract.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [dependencies]
 anyhow = "1.0.103"

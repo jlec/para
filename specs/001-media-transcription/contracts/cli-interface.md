@@ -11,7 +11,7 @@ as long as the behaviors they name stay intact.
 para -i audio.mp3                          # file in, transcript to stdout
 para -i audio.mp3 -o transcript.txt        # file in, transcript to file
 cat audio.mp3 | para                       # stdin in, transcript to stdout
-para -i lecture.m4a --model parakeet-ctc-1.1b
+para -i lecture.m4a --model parakeet-ctc-0.6b
 para -i reel.mp4 --format json
 para -i reel.mp4 --format srt -o captions.srt
 para --list-models

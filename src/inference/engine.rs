@@ -154,6 +154,58 @@ pub fn encode_chunked(
         .collect()
 }
 
+/// One chunk's CTC log-probability output: `(1, frames, vocab_size)`
+/// flattened row-major — time-major, unlike [`EncoderOutput`]'s hidden-major
+/// layout (verified separately against the real `parakeet-ctc-0.6b`
+/// `model.onnx`, not assumed identical to the TDT encoder's convention).
+pub struct CtcOutput {
+    pub data: Vec<f32>,
+    pub frames: usize,
+    pub vocab_size: usize,
+}
+
+/// Runs the CTC model (combined encoder+projection in one graph) on one
+/// chunk's mel features.
+fn run_ctc(session: &mut Session, features: &Features) -> anyhow::Result<CtcOutput> {
+    let audio_signal = Tensor::from_array((
+        [1usize, features.feature_size, features.frames],
+        features.data.clone(),
+    ))?;
+    let length = Tensor::from_array(([1usize], vec![features.frames as i64]))?;
+    let outputs = session.run(ort::inputs![
+        "audio_signal" => audio_signal,
+        "length" => length,
+    ])?;
+    let (shape, data) = outputs["logprobs"].try_extract_tensor::<f32>()?;
+    Ok(CtcOutput {
+        data: data.to_vec(),
+        frames: shape[1] as usize,
+        vocab_size: shape[2] as usize,
+    })
+}
+
+/// CTC counterpart to [`encode_chunked`] — same chunking/progress-message
+/// behavior, different per-chunk model call and output layout.
+pub fn encode_chunked_ctc(
+    samples: &[f32],
+    preprocessor: &mut mel::Preprocessor,
+    model: &mut Session,
+) -> anyhow::Result<Vec<CtcOutput>> {
+    let ranges = chunk_ranges(samples.len());
+    let total = ranges.len();
+    ranges
+        .into_iter()
+        .enumerate()
+        .map(|(i, range)| {
+            if total > 1 {
+                eprintln!("transcribing chunk {} of {total}", i + 1);
+            }
+            let features = preprocessor.extract(&samples[range])?;
+            run_ctc(model, &features)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

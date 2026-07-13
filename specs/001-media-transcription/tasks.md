@@ -47,7 +47,7 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 - [x] T007 [P] Implement ffmpeg discovery (`which::which("ffmpeg")`) with a specific "ffmpeg not found" error in `src/audio.rs`
 - [x] T008 Implement audio transcoding to 16 kHz mono 16-bit PCM WAV via an ffmpeg subprocess, plus probing for duration and audio-track presence, in `src/audio.rs` (FR-001, FR-003, FR-015) (depends on: T007). Handle non-UTF-8 paths via `Result`/`to_string_lossy()`, not `.unwrap()` — the prior draft spec's `input_path.to_str().unwrap()` sample panics on such paths, which Constitution Engineering Standards prohibit in library code; do not transcribe that pattern.
 - [x] T009 Implement stdin staging via `tempfile::NamedTempFile` and magic-byte format detection (WAV/MP3/M4A/MKV/FLAC/OGG, diagnostics only) in `src/audio.rs` (FR-002) (depends on: T008)
-- [ ] T010 [P] Define the static model registry (3 verified-real models: `parakeet-tdt-0.6b-v3` default TDT, `parakeet-tdt-0.6b-v2` TDT, `parakeet-ctc-0.6b` CTC — research.md §3) in `src/model/registry.rs`. Each entry's `files` list is its encoder + vocab.txt + (TDT only) decoder-joint graph — the mel preprocessor is fetched by `build.rs`, not part of this list (research.md §10; data-model.md). Download each model's real files first and compute actual SHA256 checksums — never placeholder them (Constitution Principle V). **`parakeet-tdt-0.6b-v3` (the default) downloaded for real while implementing T017 and its checksums filled in and verified end-to-end (`--list-models` reports `Cached` against them). `parakeet-tdt-0.6b-v2` and `parakeet-ctc-0.6b` still have `sha256: None`, pending their own (multi-GB each) downloads — not yet checked off.**
+- [x] T010 [P] Define the static model registry (3 verified-real models: `parakeet-tdt-0.6b-v3` default TDT, `parakeet-tdt-0.6b-v2` TDT, `parakeet-ctc-0.6b` CTC — research.md §3) in `src/model/registry.rs`. Each entry's `files` list is its encoder + vocab.txt + (TDT only) decoder-joint graph — the mel preprocessor is fetched by `build.rs`, not part of this list (research.md §10; data-model.md). Download each model's real files first and compute actual SHA256 checksums — never placeholder them (Constitution Principle V). All three models downloaded for real (~7.3GB total) and all real SHA-256 checksums filled in and verified end-to-end (`--list-models` reports `Cached` for all three against them).
 - [x] T011 Implement model cache path resolution (`--cache-dir`/`PARA_CACHE_DIR`/`dirs::cache_dir()` default) and cache-state checking (`NotCached`/`Cached` via file existence + checksum match) in `src/model/manager.rs` (depends on: T010)
 - [x] T012 Implement model download with stderr-only progress (`indicatif`), atomic `.tmp`-then-rename on success, stale-`.tmp` cleanup on startup, and a `download.lock` guard file in `src/model/manager.rs` (depends on: T011). Implemented and unit-tested for cache-state logic; not yet exercised against a live download (no network fetch has actually been run through this path).
 - [x] T013 Implement bounded download retry with exponential backoff (3 attempts) in `src/model/manager.rs`; on exhaustion, return a specific `thiserror` error and never fall back to a different cached model (FR-022) (depends on: T012)
@@ -69,16 +69,16 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 
 ### Tests for User Story 1
 
-- [ ] T019 [P] [US1] Contract test: `--format text` (default) writes only the transcript to stdout, nothing else, in `tests/contract/test_stdout_contract.rs`
-- [ ] T020 [P] [US1] Contract test: ffmpeg-missing, input-not-found, no-audio-track, empty/corrupted-file, and an unwritable output destination (no disk space / no write permission, FR-024) all exit non-zero with a specific stderr message and empty stdout, in `tests/contract/test_error_paths.rs`
-- [ ] T021 [P] [US1] Integration test (feature = `integration`): end-to-end text transcription against a cached fixture model produces a non-empty transcript, in `tests/integration.rs`
+- [x] T019 [P] [US1] Contract test: `--format text` (default) writes only the transcript to stdout, nothing else, in `tests/contract/test_stdout_contract.rs`. Gated behind `integration` (needs a real cached model); verified passing against `parakeet-ctc-0.6b`.
+- [x] T020 [P] [US1] Contract test: ffmpeg-missing, input-not-found, no-audio-track, empty/corrupted-file, and an unwritable output destination (no disk space / no write permission, FR-024) all exit non-zero with a specific stderr message and empty stdout, in `tests/contract/test_error_paths.rs`. Runs in the default suite (no model needed) — surfaced and fixed a real ordering bug: input/output validation now happens before model resolution/download, not after (see T024/T025).
+- [x] T021 [P] [US1] Integration test (feature = `integration`): end-to-end text transcription against a cached fixture model produces a non-empty transcript, in `tests/integration.rs`. Uses macOS `say` to generate real speech at test time and asserts on actual recognized words, not just non-emptiness.
 
 ### Implementation for User Story 1
 
-- [ ] T022 [P] [US1] Implement the TDT greedy decoder (token+duration decode loop, segment collection) in `src/inference/decoder.rs`. Read actual tensor names/shapes from the real downloaded ONNX files before hardcoding any (research.md §3)
-- [ ] T023 [P] [US1] Implement the plain-text output formatter (`transcript.text` + trailing newline, nothing else) in `src/output/text.rs`
-- [ ] T024 [US1] Wire `run()` in `src/main.rs`: resolve input (file path or staged stdin) → transcode via `audio.rs` → ensure the default model is cached via `manager.rs` → build an ONNX session via `engine.rs` → `mel.rs` → `decoder.rs` (TDT) → `text.rs` → write to stdout or the `-o` file (FR-004, FR-011) (depends on: T022, T023)
-- [ ] T025 [US1] Add the specific stderr error messages for each FR-015 rejection case (unsupported/corrupted/no-audio input) and the FR-024 unwritable-output-destination case in `src/main.rs`, matching contracts/cli-interface.md's error table (depends on: T024)
+- [x] T022 [P] [US1] Implement the TDT greedy decoder (token+duration decode loop, segment collection) in `src/inference/decoder.rs`. Read actual tensor names/shapes from the real downloaded ONNX files before hardcoding any (research.md §3). Algorithm verified against the real `onnx-asr` Python source (`NemoConformerTdt`/`_AsrWithTransducerDecoding`), not re-derived from tensor shapes alone. End-to-end verified against real speech (macOS `say` fixture): near-perfect transcription. Segment grouping (phrase-level, silence-gap heuristic) is this project's own design decision — the reference library only returns flat token timestamps.
+- [x] T023 [P] [US1] Implement the plain-text output formatter (`transcript.text` + trailing newline, nothing else) in `src/output/text.rs`
+- [x] T024 [US1] Wire `run()` in `src/main.rs`: resolve input (file path or staged stdin) → transcode via `audio.rs` → ensure the default model is cached via `manager.rs` → build an ONNX session via `engine.rs` → `mel.rs` → `decoder.rs` (TDT) → `text.rs` → write to stdout or the `-o` file (FR-004, FR-011) (depends on: T022, T023). Input/output validation reordered ahead of model download for fail-fast behavior (Constitution Principle IV) — a bad `-i`/`-o` path now fails in under a second instead of after a multi-GB download.
+- [x] T025 [US1] Add the specific stderr error messages for each FR-015 rejection case (unsupported/corrupted/no-audio input) and the FR-024 unwritable-output-destination case in `src/main.rs`, matching contracts/cli-interface.md's error table (depends on: T024)
 
 **Checkpoint**: At this point, User Story 1 is fully functional and independently testable — this is the MVP.
 
@@ -92,18 +92,18 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 
 ### Tests for User Story 2
 
-- [ ] T026 [P] [US2] Contract test: an unrecognized `--model` value exits non-zero, lists valid IDs, and attempts no transcription, in `tests/contract/test_model_unknown.rs`
-- [ ] T027 [P] [US2] Contract test: `--list-models` lists every registered model with cache state and marks exactly one default, in `tests/contract/test_list_models.rs`
-- [ ] T028 [P] [US2] Contract test: selecting a specific model actually uses that model (echoed in output/status), never silently substituted, in `tests/contract/test_model_selection.rs`
-- [ ] T029 [P] [US2] Contract test: the CLI's flag surface has no standalone command whose only effect is removing a cached model without also re-fetching it (guards FR-021), in `tests/contract/test_no_standalone_remove.rs`
+- [x] T026 [P] [US2] Contract test: an unrecognized `--model` value exits non-zero, lists valid IDs, and attempts no transcription, in `tests/contract/test_model_unknown.rs`
+- [x] T027 [P] [US2] Contract test: `--list-models` lists every registered model with cache state and marks exactly one default, in `tests/contract/test_list_models.rs`. Gated behind `integration`.
+- [x] T028 [P] [US2] Contract test: selecting a specific model actually uses that model (echoed in output/status), never silently substituted, in `tests/contract/test_model_selection.rs`. Gated behind `integration`.
+- [x] T029 [P] [US2] Contract test: the CLI's flag surface has no standalone command whose only effect is removing a cached model without also re-fetching it (guards FR-021), in `tests/contract/test_no_standalone_remove.rs`
 
 ### Implementation for User Story 2
 
-- [ ] T030 [US2] Implement the CTC greedy decoder (argmax + collapse-repeats + remove-blanks, single whole-file segment) in `src/inference/decoder.rs`. Verify actual tensor names from the real CTC ONNX files before hardcoding (research.md §3) (depends on: T022)
-- [ ] T031 [US2] Wire `--model` flag validation against the registry (unknown ID → error + valid-options list, FR-010) in `src/main.rs` (depends on: T024, T030)
-- [ ] T032 [US2] Emit a stderr status line identifying the model actually used (e.g., `"using model: <id>"`) on every transcription run, in `src/main.rs` (FR-009; spec.md US2 acceptance scenarios 1 and 3 — the model used must be "clearly identified," not just correct) (depends on: T031)
-- [ ] T033 [US2] Implement the `--list-models` command output (id, description including language/timing-granularity per data-model.md's `ModelOption`, cache state, default marker), exiting 0 without transcribing (FR-019) (depends on: T032)
-- [ ] T034 [US2] Wire `--refresh-model` to the manager's refresh function from T014, in `src/main.rs` (FR-020) (depends on: T033)
+- [x] T030 [US2] Implement the CTC greedy decoder (argmax + collapse-repeats + remove-blanks, single whole-file segment) in `src/inference/decoder.rs`. Verify actual tensor names from the real CTC ONNX files before hardcoding (research.md §3) (depends on: T022). Algorithm verified against the real `onnx-asr` `_AsrWithCtcDecoding._decoding` source. `parakeet-ctc-0.6b`'s `model.onnx` output layout (`logprobs [B,T,V]`, time before vocab) verified directly — differs from the TDT encoder's hidden-before-time layout, not assumed identical. End-to-end verified against real speech.
+- [x] T031 [US2] Wire `--model` flag validation against the registry (unknown ID → error + valid-options list, FR-010) in `src/main.rs` (depends on: T024, T030)
+- [x] T032 [US2] Emit a stderr status line identifying the model actually used (e.g., `"using model: <id>"`) on every transcription run, in `src/main.rs` (FR-009; spec.md US2 acceptance scenarios 1 and 3 — the model used must be "clearly identified," not just correct) (depends on: T031)
+- [x] T033 [US2] Implement the `--list-models` command output (id, description including language/timing-granularity per data-model.md's `ModelOption`, cache state, default marker), exiting 0 without transcribing (FR-019) (depends on: T032). Surfaced and fixed a real perf bug while verifying end-to-end: cache-state checking re-hashed every checksummed file on every call, turning `--list-models` into a 79-second, ~7GB checksum sweep once T010's real checksums landed — fixed to existence-only checks (research.md §7's 2026-07-13 correction); now ~1s.
+- [x] T034 [US2] Wire `--refresh-model` to the manager's refresh function from T014, in `src/main.rs` (FR-020) (depends on: T033)
 
 **Checkpoint**: User Stories 1 AND 2 both work independently.
 
@@ -117,13 +117,13 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 
 ### Tests for User Story 3
 
-- [ ] T035 [P] [US3] Contract test: `--format json` output validates against `contracts/output-json-schema.json`, and every segment has `end > start`, in `tests/contract/test_json_output.rs`
-- [ ] T036 [P] [US3] Integration test (feature = `integration`): end-to-end JSON transcription; deserialize and confirm `text`/`segments`/`model`/`duration_seconds` are present, in `tests/integration.rs`
+- [x] T035 [P] [US3] Contract test: `--format json` output validates against `contracts/output-json-schema.json`, and every segment has `end > start`, in `tests/contract/test_json_output.rs`. Gated behind `integration`.
+- [x] T036 [P] [US3] Integration test (feature = `integration`): end-to-end JSON transcription; deserialize and confirm `text`/`segments`/`model`/`duration_seconds` are present, in `tests/integration.rs`. Uses a real `say`-generated speech fixture.
 
 ### Implementation for User Story 3
 
-- [ ] T037 [P] [US3] Implement the JSON output formatter (`serde_json`, seconds rounded to 2 decimal places) in `src/output/json.rs` per contracts/output-json-schema.json
-- [ ] T038 [US3] Wire the `--format json` dispatch in `src/main.rs` (depends on: T037)
+- [x] T037 [P] [US3] Implement the JSON output formatter (`serde_json`, seconds rounded to 2 decimal places) in `src/output/json.rs` per contracts/output-json-schema.json
+- [x] T038 [US3] Wire the `--format json` dispatch in `src/main.rs` (depends on: T037). `output::write_transcript`'s existing format dispatch (mod.rs) meant `run()` only needed to build a `Transcript` and call it once per `OutputFormat` — no per-format branching needed in `main.rs` itself.
 
 **Checkpoint**: User Stories 1, 2, AND 3 all work independently.
 
@@ -137,13 +137,13 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 
 ### Tests for User Story 4
 
-- [ ] T039 [P] [US4] Contract test: SRT block numbering, comma millisecond separator, blank-line spacing, and the single-segment CTC-model fallback, in `tests/contract/test_srt_output.rs`
-- [ ] T040 [P] [US4] Integration test (feature = `integration`): end-to-end SRT transcription; verify `-->` and the comma separator are present, in `tests/integration.rs`
+- [x] T039 [P] [US4] Contract test: SRT block numbering, comma millisecond separator, blank-line spacing, and the single-segment CTC-model fallback, in `tests/contract/test_srt_output.rs`. Gated behind `integration`.
+- [x] T040 [P] [US4] Integration test (feature = `integration`): end-to-end SRT transcription; verify `-->` and the comma separator are present, in `tests/integration.rs`. Uses a real `say`-generated speech fixture.
 
 ### Implementation for User Story 4
 
-- [ ] T041 [P] [US4] Implement the `fmt_srt_time` helper and SRT output formatter in `src/output/srt.rs` per contracts/output-srt.md
-- [ ] T042 [US4] Wire the `--format srt` dispatch in `src/main.rs` (depends on: T041)
+- [x] T041 [P] [US4] Implement the `fmt_srt_time` helper and SRT output formatter in `src/output/srt.rs` per contracts/output-srt.md
+- [x] T042 [US4] Wire the `--format srt` dispatch in `src/main.rs` (depends on: T041). Same `write_transcript` dispatch as T038 covers this.
 
 **Checkpoint**: All four user stories are independently functional.
 
@@ -153,10 +153,10 @@ Single Rust binary crate at repository root: `src/`, `tests/` (per plan.md — n
 
 **Purpose**: Documentation and final verification across all stories
 
-- [ ] T043 [P] Write `README.md` per plan.md's README requirements: prerequisites, build, first-run behavior (model download progress, CoreML compile notice), all flags with examples, model IDs and when to use each, `PARA_CACHE_DIR`, language support notes, the ONNX Runtime build-time-fetch-and-static-link note (research.md §11 — corrected from an earlier `load-dynamic`/`ORT_DYLIB_PATH` design that was dropped before ever being exercised), and the cross-compilation-tooling caveat (research.md §9)
-- [ ] T044 [P] Run `cargo clippy -- -D warnings` and `cargo fmt --check`; fix any findings
-- [ ] T045 Run every scenario in quickstart.md end-to-end against a real release build (all four user stories, offline operation, pipeline safety, `--refresh-model`)
-- [ ] T046 [P] Add inline `#[cfg(test)]` unit tests for output-formatter edge cases not already covered by contract tests (e.g., `fmt_srt_time(3661.5) == "01:01:01,500"`, CTC single-segment SRT block) in `src/output/srt.rs` and `src/output/json.rs`
+- [x] T043 [P] Write `README.md` per plan.md's README requirements: prerequisites, build, first-run behavior (model download progress, CoreML compile notice), all flags with examples, model IDs and when to use each, `PARA_CACHE_DIR`, language support notes, the ONNX Runtime build-time-fetch-and-static-link note (research.md §11 — corrected from an earlier `load-dynamic`/`ORT_DYLIB_PATH` design that was dropped before ever being exercised), and the cross-compilation-tooling caveat (research.md §9). Also fixed a stale reference in `contracts/cli-interface.md` to the nonexistent `parakeet-ctc-1.1b` (a leftover from before the registry-size correction, research.md §3).
+- [x] T044 [P] Run `cargo clippy -- -D warnings` and `cargo fmt --check`; fix any findings. Clean (including `--all-targets`, covering tests).
+- [x] T045 Run every scenario in quickstart.md end-to-end against a real release build (all four user stories, offline operation, pipeline safety, `--refresh-model`). All passed against real `say`-generated speech + a synthesized video file: US1 (wav/mp4/file-redirect/stdin), US2 (`--list-models`, invalid model, and — on a 60s clip where decode cost outweighs fixed model-load overhead — CTC measurably faster than TDT-v3, 8.1s vs 9.9s), US3 (JSON schema), US4 (SRT), pipeline safety, and `--refresh-model` (real re-download verified). Offline-operation scenario (disconnecting the network) not exercised in this environment — would require disabling the host's network interface; the design (no runtime network calls outside model download, verified throughout T010-T017) has been checked by inspection instead.
+- [x] T046 [P] Add inline `#[cfg(test)]` unit tests for output-formatter edge cases not already covered by contract tests (e.g., `fmt_srt_time(3661.5) == "01:01:01,500"`, CTC single-segment SRT block) in `src/output/srt.rs` and `src/output/json.rs`. Already present from Foundational-phase work.
 
 ---
 

@@ -8,8 +8,9 @@ output contracts in `contracts/output-json-schema.json` / `contracts/output-srt.
 
 - Rust toolchain via `rustup`, 2024-edition-capable (MSRV 1.85+)
 - `ffmpeg` on `PATH`
-- Network access for the _first_ build (`ort` fetches the ONNX Runtime binary) and the _first_ use
-  of any given model (downloads it to the local cache)
+- Network access for the _first_ build (`ort` downloads and statically links a prebuilt ONNX
+  Runtime archive — research.md §11) and the _first_ use of any given model (downloads it to the
+  local cache)
 - A short sample audio file and a short sample video file with speech, in different common formats
   (e.g., `sample.wav`, `sample.mp4`)
 
@@ -19,8 +20,9 @@ output contracts in `contracts/output-json-schema.json` / `contracts/output-srt.
 cargo build --release
 ```
 
-Expected: succeeds with only network access used being the one-time ONNX Runtime fetch; produces
-`target/release/para` plus a co-located ONNX Runtime shared library (research.md §2).
+Expected: succeeds with only network access used being the one-time ONNX Runtime fetch; produces a
+single `target/release/para` binary with no co-located shared library to ship (research.md §11 —
+statically linked).
 
 ## US1 — Plain-text transcript (P1)
 

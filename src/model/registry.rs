@@ -46,10 +46,6 @@ pub struct ModelEntry {
     pub files: &'static [ModelFile],
 }
 
-/// HuggingFace repo → local filename resolution, matching the reference
-/// `onnx-asr` implementation's `_get_model_files` (research.md §10).
-const HF_RESOLVE: &str = "https://huggingface.co";
-
 pub const MODELS: &[ModelEntry] = &[
     ModelEntry {
         id: "parakeet-tdt-0.6b-v3",
@@ -95,25 +91,25 @@ pub const MODELS: &[ModelEntry] = &[
                 name: "encoder-model.onnx",
                 role: FileRole::Encoder,
                 source_url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main/encoder-model.onnx",
-                sha256: None,
+                sha256: Some("3987bcd28175d829d12888a996a84e8f62a0e374d9ffd640662c1515adc679d3"),
             },
             ModelFile {
                 name: "encoder-model.onnx.data",
                 role: FileRole::Encoder,
                 source_url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main/encoder-model.onnx.data",
-                sha256: None,
+                sha256: Some("4dab7362d4874d85965045b1e41b2d61dd2cc0fb25671a7f6b3dc47bf120cc41"),
             },
             ModelFile {
                 name: "decoder_joint-model.onnx",
                 role: FileRole::DecoderJoint,
                 source_url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main/decoder_joint-model.onnx",
-                sha256: None,
+                sha256: Some("cbb52a07bd70ab5b67f8439d4b3cd8704b18467b4430bcacb5adabe154b8d191"),
             },
             ModelFile {
                 name: "vocab.txt",
                 role: FileRole::Vocab,
                 source_url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main/vocab.txt",
-                sha256: None,
+                sha256: Some("ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d"),
             },
         ],
     },
@@ -128,19 +124,19 @@ pub const MODELS: &[ModelEntry] = &[
                 name: "model.onnx",
                 role: FileRole::Encoder,
                 source_url: "https://huggingface.co/istupakov/parakeet-ctc-0.6b-onnx/resolve/main/model.onnx",
-                sha256: None,
+                sha256: Some("4d2866ba5d0162d870776bad53991f29dac04238d1d7b1e02874b43ebc5c702a"),
             },
             ModelFile {
                 name: "model.onnx.data",
                 role: FileRole::Encoder,
                 source_url: "https://huggingface.co/istupakov/parakeet-ctc-0.6b-onnx/resolve/main/model.onnx.data",
-                sha256: None,
+                sha256: Some("e1951d4e0bdcde6e3059b8796140d98d73b3b9c7bee1adbc60505ceb09b9473f"),
             },
             ModelFile {
                 name: "vocab.txt",
                 role: FileRole::Vocab,
                 source_url: "https://huggingface.co/istupakov/parakeet-ctc-0.6b-onnx/resolve/main/vocab.txt",
-                sha256: None,
+                sha256: Some("ed16e1a4e3a3aa379138c0b1888e5d49f993c9d512b2be4d46e90a87afd54921"),
             },
         ],
     },
@@ -184,7 +180,7 @@ mod tests {
             assert!(!entry.files.is_empty());
             for file in entry.files {
                 assert!(!file.name.is_empty());
-                assert!(file.source_url.starts_with(HF_RESOLVE));
+                assert!(file.source_url.starts_with("https://huggingface.co"));
             }
         }
     }

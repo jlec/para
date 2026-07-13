@@ -86,8 +86,14 @@ fn sha256_file(path: &Path) -> anyhow::Result<String> {
     Ok(digest.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// Checks whether every file for `entry` is present (and, where a checksum
-/// is known, matches it) in the default cache location.
+/// Checks whether every file for `entry` is present in the default cache
+/// location. Existence-only, deliberately — checksums are already verified
+/// once, right after each file is downloaded and before it's renamed into
+/// place (`download_one`), so re-hashing multi-gigabyte model files on every
+/// ordinary invocation (including `--list-models`) would turn a listing
+/// command into a multi-minute checksum sweep for no benefit. `--refresh-model`
+/// (`refresh`, below) is the deliberate re-verification path when a user
+/// actually wants to force a fresh, re-checksummed download.
 pub fn cache_state(entry: &ModelEntry) -> anyhow::Result<CacheState> {
     cache_state_in(entry, None)
 }
@@ -98,14 +104,8 @@ pub fn cache_state_in(
 ) -> anyhow::Result<CacheState> {
     let dir = model_dir(entry, override_dir)?;
     for file in entry.files {
-        let path = dir.join(file.name);
-        if !path.exists() {
+        if !dir.join(file.name).exists() {
             return Ok(CacheState::NotCached);
-        }
-        if let Some(expected) = file.sha256 {
-            if sha256_file(&path)? != expected {
-                return Ok(CacheState::NotCached);
-            }
         }
     }
     Ok(CacheState::Cached)

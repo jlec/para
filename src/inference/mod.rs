@@ -12,7 +12,7 @@ pub struct Transcript {
 }
 
 /// One timed unit of a transcript. `start`/`end` are seconds; `end` must be > `start`.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Segment {
     pub start: f64,
     pub end: f64,

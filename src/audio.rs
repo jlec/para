@@ -86,6 +86,8 @@ pub fn transcode_to_wav(input: &Path, dest: &Path) -> anyhow::Result<()> {
         .arg("1")
         .arg("-c:a")
         .arg("pcm_s16le")
+        .arg("-f")
+        .arg("wav")
         .arg(dest)
         .output()
         .with_context(|| format!("failed to run ffmpeg on {}", input.display()))?;
@@ -112,6 +114,39 @@ pub fn stage_stdin() -> anyhow::Result<tempfile::NamedTempFile> {
         tempfile::NamedTempFile::new().context("failed to create temp file for stdin input")?;
     std::io::Write::write_all(&mut file, &buf).context("failed to stage stdin input to disk")?;
     Ok(file)
+}
+
+/// Reads a mono 16-bit PCM WAV file (the exact format `transcode_to_wav`
+/// produces) into normalized `f32` samples — `int16 / 32768.0`, the same
+/// scaling the reference `onnx-asr` implementation's `read_wav` uses.
+/// Locates the `data` chunk properly rather than assuming a fixed header
+/// offset, since `fmt ` chunk size can vary.
+pub fn read_wav_samples(path: &Path) -> anyhow::Result<Vec<f32>> {
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("failed to read wav file {}", path.display()))?;
+    anyhow::ensure!(
+        bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE",
+        "{} is not a valid WAV file",
+        path.display()
+    );
+
+    let mut pos = 12;
+    while pos + 8 <= bytes.len() {
+        let chunk_id = &bytes[pos..pos + 4];
+        let chunk_size = u32::from_le_bytes(bytes[pos + 4..pos + 8].try_into().unwrap()) as usize;
+        let data_start = pos + 8;
+        if chunk_id == b"data" {
+            let data_end = (data_start + chunk_size).min(bytes.len());
+            let samples = bytes[data_start..data_end]
+                .chunks_exact(2)
+                .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+                .collect();
+            return Ok(samples);
+        }
+        // Chunks are word-aligned; an odd-sized chunk has a padding byte.
+        pos = data_start + chunk_size + (chunk_size % 2);
+    }
+    anyhow::bail!("{}: no data chunk found in WAV file", path.display())
 }
 
 /// Magic-byte format detection for diagnostics only (FR-001's Assumption:
