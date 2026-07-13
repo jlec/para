@@ -57,17 +57,29 @@ fn execution_providers(device: Device, cache_dir: Option<&Path>) -> Vec<Executio
     }
 }
 
+/// Whether the CoreML compiled-model cache already has *any* content. Used
+/// as a coarse but accurate-in-practice signal for "has a compile already
+/// happened on this machine" — after the very first successful run, every
+/// session `para` builds (preprocessor/encoder/decoder-joint) has already
+/// been compiled and cached, so any content at all means later runs won't
+/// need to recompile.
+fn coreml_cache_has_content(cache_dir: Option<&Path>) -> bool {
+    coreml_cache_dir(cache_dir)
+        .and_then(|dir| std::fs::read_dir(dir).ok())
+        .is_some_and(|mut entries| entries.next().is_some())
+}
+
 /// Emits the CoreML first-compile stderr notice at most once per process,
 /// before the session is built, so a user doesn't mistake a silent 30-60s
-/// compile for a hang. Printed whenever CoreML will be attempted at all;
-/// harmless to print on a warm-cache run too (the notice says "first run
-/// only," which is now actually true per-model thanks to `with_model_cache_dir`
-/// above, but this per-process flag doesn't try to detect a cache hit before
-/// printing).
-fn maybe_emit_coreml_notice(device: Device) {
+/// compile for a hang. Skipped entirely once the cache already has content
+/// (`coreml_cache_has_content`) — otherwise this printed "first run only" on
+/// *every* run regardless of whether a compile was actually about to happen,
+/// which is exactly the misleading behavior a user reported.
+fn maybe_emit_coreml_notice(device: Device, cache_dir: Option<&Path>) {
     let will_try_coreml = matches!(device, Device::Coreml)
         || matches!(device, Device::Auto if coreml_capable_target());
     if will_try_coreml
+        && !coreml_cache_has_content(cache_dir)
         && COREML_NOTICE_SHOWN
             .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
             .is_ok()
@@ -85,7 +97,7 @@ pub fn build_session_from_file(
     device: Device,
     cache_dir: Option<&Path>,
 ) -> anyhow::Result<Session> {
-    maybe_emit_coreml_notice(device);
+    maybe_emit_coreml_notice(device, cache_dir);
     Session::builder()
         .context("failed to create ONNX Runtime session builder")?
         .with_execution_providers(execution_providers(device, cache_dir))
@@ -101,7 +113,7 @@ pub fn build_session_from_memory(
     device: Device,
     cache_dir: Option<&Path>,
 ) -> anyhow::Result<Session> {
-    maybe_emit_coreml_notice(device);
+    maybe_emit_coreml_notice(device, cache_dir);
     Session::builder()
         .context("failed to create ONNX Runtime session builder")?
         .with_execution_providers(execution_providers(device, cache_dir))
@@ -263,6 +275,20 @@ mod tests {
         for pair in ranges.windows(2) {
             assert_eq!(pair[0].end, pair[1].start);
         }
+    }
+
+    #[test]
+    fn coreml_cache_is_empty_before_any_compile() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!coreml_cache_has_content(Some(dir.path())));
+    }
+
+    #[test]
+    fn coreml_cache_has_content_once_something_is_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let coreml_dir = coreml_cache_dir(Some(dir.path())).unwrap();
+        std::fs::write(coreml_dir.join("some-compiled-model"), b"").unwrap();
+        assert!(coreml_cache_has_content(Some(dir.path())));
     }
 
     #[test]

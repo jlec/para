@@ -610,6 +610,23 @@ all 24 partitions, `0` fresh `SaveModel` writes — the recompile is now genuine
 per-process. Applied to every session `para` builds (preprocessor, encoder, decoder-joint) since
 all three go through the same `execution_providers`/`build_session_from_*` path.
 
+**Correction, 2026-07-14 — the "compiling" notice itself was still misleading the user**: after the
+above landed, the user reported it was "still compiling every time," reproduced with
+`cat test.wav | target/debug/para`. Re-verified the caching mechanism itself with a temporary
+verbose ORT logger against that exact repro: it genuinely works (run 1: 24 `SaveModel` writes; run
+2: 24 `already cached ... will be reused`, 0 writes). The actual bug was `maybe_emit_coreml_notice`
+— it printed "compiling... first run only" based purely on `Device` + target OS/arch, with no
+check of whether a compile was actually about to happen, so it kept claiming "first run" on every
+run regardless of a warm cache. This is exactly the same category of bug as §13's false claim, just
+in the message text rather than the EP selection.
+
+**Decision**: Added `coreml_cache_has_content` — checks whether `<cache-root>/coreml-cache` has any
+entries at all before printing the notice. Coarse (it doesn't verify the *specific* model needed is
+cached, just that *something* has been compiled before) but accurate in practice for this single-
+user local-cache design: after the first successful run, every session `para` ever builds has
+already been compiled and cached, so any content at all means later runs won't need to recompile.
+Verified against the user's exact repro command: run 1 shows the notice, runs 2 and 3 do not.
+
 ## Summary of changes from the prior technical spec
 
 | Area                                                                 | Prior spec                                                                                      | Resolved here                                                                                                                                                                                                                                               | Why                                                                                                                                                                                  |
