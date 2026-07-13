@@ -6,6 +6,7 @@ default_language_version:
 default_stages: [pre-commit]
 exclude: >
   (?x)^(
+  .specify|
   .ansible|
   .beads|
   .cache|
@@ -96,7 +97,6 @@ repos:
       # - id: require-ascii
       # - id: rubocop
       - id: shellcheck
-        exclude: "^\\.specify/scripts/bash/setup-tasks\\.sh$"
       # - id: script-must-have-extension
       # - id: script-must-not-have-extension
       - id: shfmt
