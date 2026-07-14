@@ -627,6 +627,64 @@ user local-cache design: after the first successful run, every session `para` ev
 already been compiled and cached, so any content at all means later runs won't need to recompile.
 Verified against the user's exact repro command: run 1 shows the notice, runs 2 and 3 do not.
 
+## 15. CoreML measured to give zero speedup; dropped from the default path (2026-07-14)
+
+**Context**: The user reported repeated runs of `cat test.wav | target/debug/para` staying slow
+despite §14's caching fix and asked for profiling. Instrumented every pipeline stage with
+`Instant`-based timestamps and ran the exact repro command warm (cache populated). Breakdown of a
+~2.5s warm run: ~0.1s for CLI/ffmpeg/vocab, **~1.4-1.6s building the encoder session** (reading the
+2.4GB external-data graph + ORT graph optimization + CoreML partition/cache-lookup), ~0.04s for the
+decoder-joint session, **~0.8-0.9s for the actual encoder forward pass**, ~0.05s for decode+output.
+
+**Finding**: Directly compared `--device coreml` against `--device cpu` on the same instrumented
+build. They were statistically identical — same ~1.4-1.6s session-build time, same ~0.8-0.9s
+inference time, either way. `CoreML::with_static_input_shapes(true)` (the stability workaround §13
+required, to avoid a real ONNX Runtime crash with this model's external-data storage) restricts
+CoreML to only the fully-static-shaped subgraphs, which turns out to be little-to-nothing worth
+accelerating for this encoder. §13/§14's caching fixes were real and correct (they eliminated a
+genuine repeated ~30-60s ANE compile), but they were caching a code path that, once actually
+measured end-to-end, provides no net benefit over plain CPU for this model family.
+
+**Decision**: `Device::Auto` and `Device::Cpu` both run on CPU only now; `Device::Coreml` remains
+available, completely unchanged, as an explicit opt-in for anyone who wants to try it on different
+hardware or models. This is a backward-incompatible redefinition of Constitution Principle VI (which
+mandated CoreML as the non-opt-in default) — the constitution has been amended to v2.0.0 to match,
+per its own versioning policy, rather than silently violating a ratified MUST principle.
+
+**A second attempted optimization was tried and reverted**: `ort` exposes
+`SessionBuilder::with_optimized_model_path`, which serializes the graph-optimized model to disk so a
+later load can skip re-running optimization passes (`GraphOptimizationLevel::Disable`). Implemented
+it for `build_session_from_file`, mirroring §14's cache-check-then-populate pattern. Two real
+problems surfaced, in order:
+
+1. **ORT refuses to serialize a session containing CoreML's compiled nodes** at all ("Unable to
+   serialize model as it contains compiled nodes. Please disable any execution providers which
+   generate compiled nodes.") — confirming the optimized-graph cache and CoreML's own compile cache
+   are mutually exclusive within one session build, not just independently cacheable. (This became
+   moot once CoreML was dropped from the default path, above — the two caches no longer need to
+   coexist for `Auto`/`Cpu`.)
+2. **The optimized-graph cache was measured to be *slower*, not faster, even with CoreML out of the
+   picture entirely.** Loading the pre-optimized file with optimization disabled took ~1.7-2.7s for
+   the encoder session — worse than the ~1.4s baseline of just re-optimizing the original file fresh
+   every time. Confirmed across repeated runs, not a one-off. The dominant per-load cost for this
+   model evidently isn't the optimization *passes* themselves (constant folding, fusions, etc.) but
+   something else in ORT's session construction — most likely reading and index-building the 2.4GB
+   external-data tensor set, which happens regardless of whether the graph structure is
+   pre-optimized. (A real, separate correctness issue was found and fixed along the way while
+   testing this: the serialized optimized model doesn't embed external-data tensors, so loading it
+   from a different directory than the original file needs the `.onnx.data` sidecar file
+   *hard-linked* — not symlinked — into the same directory; a symlink gets its real path resolved
+   and rejected by ORT's path-containment check as escaping the model directory. Moot now that this
+   approach itself is reverted, but recorded here in case optimized-graph caching is revisited.)
+
+**Consequence**: no further optimization avenue for the ~2.3-2.4s per-invocation cost was found in
+this pass. It reflects the genuine cost of initializing a ~600M-parameter model's ONNX Runtime
+session and running one forward pass, once per process, with no persistent daemon to amortize it
+across invocations (Constitution Principle I is unaffected by this finding — a daemon/server mode
+was never on the table). Model loading dominates over decode for short clips; SC-005's claim (CTC
+measurably faster than TDT on the same input) still holds and was re-confirmed on a 60s clip in
+T045, where decode cost is large enough to outweigh the shared fixed model-load cost.
+
 ## Summary of changes from the prior technical spec
 
 | Area                                                                 | Prior spec                                                                                      | Resolved here                                                                                                                                                                                                                                               | Why                                                                                                                                                                                  |
@@ -643,3 +701,4 @@ Verified against the user's exact repro command: run 1 shows the notice, runs 2 
 | Preprocessor graph sourcing                                          | (not addressed in prior draft)                                                                  | `build.rs` downloads + checksum-verifies the `onnx-asr` PyPI wheel at build time, embeds via `include_bytes!` from `OUT_DIR` — not committed to git                                                                                                          | Repo's `forbid-binary` policy rules out vendoring the files directly (§10 addendum, 2026-07-11)                                                                                      |
 | TDT/CTC decode algorithm and segment grouping                        | Presented as settled implementation detail, no segment-grouping strategy specified              | Ported directly from the real `onnx-asr` Python source; segment grouping is a new, project-owned silence-gap heuristic since the reference library has no concept of segments at all             | §12 — Constitution Principle V; verified end-to-end against real speech, not just structurally                                                                                       |
 | ORT linking (final)                                                  | (see earlier row)                                                                                | `download-binaries` alone — real static linking, no dylib, no `load-dynamic` reentrant-deadlock landmine                                                                                                                                                   | §11 — the `load-dynamic` intermediate decision was never actually run until T017                                                                                                     |
+| CoreML default execution provider (Constitution VI, final)          | Presented as settled: CoreML MUST be the non-opt-in `Auto` default                              | `Auto`/`Cpu` both run on CPU; CoreML kept only as explicit `--device coreml` opt-in                                                                                                                                                                        | §15 — measured zero speedup over CPU for this model family plus a real ORT crash workaround; constitution amended to v2.0.0 rather than silently violated                          |

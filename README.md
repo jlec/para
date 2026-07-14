@@ -32,9 +32,7 @@ para -i lecture.mp3
 ```
 
 The first time you use a given model, `para` downloads it to your local cache with a progress bar
-on stderr — stdout stays clean throughout. On Apple Silicon, the very first inference call also
-prints a one-time note that it's compiling the model for the Neural Engine (can take up to a
-minute; every run after that is fast). After that first run, everything is offline.
+on stderr — stdout stays clean throughout. After that first run, everything is offline.
 
 ## Usage
 
@@ -57,7 +55,7 @@ para -i audio.mp3 --refresh-model
 | `-o, --output <PATH>`            | stdout                               |                                                                               |
 | `-m, --model <ID>`               | `parakeet-tdt-0.6b-v3`               | See Models below                                                             |
 | `-f, --format <text\|json\|srt>` | `text`                               |                                                                               |
-| `--device <auto\|coreml\|cpu>`   | `auto`                                | `auto` picks CoreML on Apple Silicon, CPU elsewhere                          |
+| `--device <auto\|coreml\|cpu>`   | `auto`                                | `auto` runs on CPU (measured no faster on CoreML for these models — research.md §15); pass `coreml` explicitly to try Apple Neural Engine acceleration anyway |
 | `--cache-dir <PATH>`             | OS cache dir                         | Where models are stored/looked up                                           |
 | `--list-models`                  | —                                     | Prints every model, its cache state, and the default; exits without transcribing |
 | `--refresh-model`                | —                                     | Deletes and re-downloads the selected model's cache before running          |
@@ -89,8 +87,8 @@ duration/timing head. `para` prints a note to stderr when this applies.
   `specs/001-media-transcription/contracts/output-srt.md`.
 
 stdout carries only the requested output — no banners, no progress. Everything else (download
-progress, the CoreML compile note, per-chunk `"transcribing chunk N of M"` progress on long
-inputs, and all errors) goes to stderr.
+progress, per-chunk `"transcribing chunk N of M"` progress on long inputs, and all errors) goes to
+stderr.
 
 ## Development
 

@@ -19,19 +19,19 @@ const CHUNK_SECONDS: f64 = 300.0;
 
 static COREML_NOTICE_SHOWN: AtomicBool = AtomicBool::new(false);
 
-/// Whether this target could plausibly run the CoreML execution provider.
-/// (`Device::Auto` only tries CoreML on darwin/aarch64 — Constitution Principle VI.)
+/// Whether this target could plausibly run the CoreML execution provider —
+/// only meaningful for an explicit `--device coreml` request now (research.md
+/// §15: CoreML is no longer attempted by `Auto`, having measured zero benefit
+/// for this model family and an outright conflict with the optimized-graph
+/// cache below).
 fn coreml_capable_target() -> bool {
     cfg!(all(target_os = "macos", target_arch = "aarch64"))
 }
 
 /// Directory CoreML caches its compiled models in, so the ~30-60s compile
 /// (Apple Neural Engine) only happens once ever, not on every session load
-/// (`ort`'s `CoreML::with_model_cache_dir` — without it, ORT's own docs say
-/// it "will be compiled and saved to disk on each instantiation of a
-/// session", which is exactly the repeated-compile behavior this fixes).
-/// Shares the same cache root as downloaded models so `--cache-dir`/
-/// `PARA_CACHE_DIR` consistently relocates everything `para` persists.
+/// (`ort`'s `CoreML::with_model_cache_dir`). Only reachable via explicit
+/// `--device coreml` (research.md §15).
 fn coreml_cache_dir(cache_dir: Option<&Path>) -> Option<std::path::PathBuf> {
     let root = crate::model::manager::cache_root(cache_dir).ok()?;
     let dir = root.join("coreml-cache");
@@ -39,30 +39,31 @@ fn coreml_cache_dir(cache_dir: Option<&Path>) -> Option<std::path::PathBuf> {
     Some(dir)
 }
 
+/// `Auto` and `Cpu` both run on CPU alone — CoreML measured zero speedup for
+/// this model family and, worse, produces compiled nodes ORT can't serialize
+/// alongside the optimized-graph cache below ("Unable to serialize model as
+/// it contains compiled nodes"), so it's no longer the default (Constitution
+/// Principle VI, amended). `Coreml` remains available as an explicit opt-in,
+/// unchanged from before, for anyone who wants to try it on different
+/// hardware or models — it does not participate in the optimized-graph
+/// cache (research.md §15).
 fn execution_providers(device: Device, cache_dir: Option<&Path>) -> Vec<ExecutionProviderDispatch> {
-    let coreml = || {
-        let mut ep = CoreML::default().with_static_input_shapes(true);
-        if let Some(dir) = coreml_cache_dir(cache_dir) {
-            ep = ep.with_model_cache_dir(dir.to_string_lossy().into_owned());
-        }
-        ep.build()
-    };
     match device {
-        Device::Cpu => vec![CPU::default().build()],
-        Device::Coreml => vec![coreml()],
-        Device::Auto if coreml_capable_target() => {
-            vec![coreml(), CPU::default().build()]
+        Device::Cpu | Device::Auto => vec![CPU::default().build()],
+        Device::Coreml => {
+            let mut ep = CoreML::default().with_static_input_shapes(true);
+            if let Some(dir) = coreml_cache_dir(cache_dir) {
+                ep = ep.with_model_cache_dir(dir.to_string_lossy().into_owned());
+            }
+            vec![ep.build(), CPU::default().build()]
         }
-        Device::Auto => vec![CPU::default().build()],
     }
 }
 
 /// Whether the CoreML compiled-model cache already has *any* content. Used
 /// as a coarse but accurate-in-practice signal for "has a compile already
-/// happened on this machine" — after the very first successful run, every
-/// session `para` builds (preprocessor/encoder/decoder-joint) has already
-/// been compiled and cached, so any content at all means later runs won't
-/// need to recompile.
+/// happened on this machine" — after the first successful `--device coreml`
+/// run, every session built that way has already been compiled and cached.
 fn coreml_cache_has_content(cache_dir: Option<&Path>) -> bool {
     coreml_cache_dir(cache_dir)
         .and_then(|dir| std::fs::read_dir(dir).ok())
@@ -71,14 +72,11 @@ fn coreml_cache_has_content(cache_dir: Option<&Path>) -> bool {
 
 /// Emits the CoreML first-compile stderr notice at most once per process,
 /// before the session is built, so a user doesn't mistake a silent 30-60s
-/// compile for a hang. Skipped entirely once the cache already has content
-/// (`coreml_cache_has_content`) — otherwise this printed "first run only" on
-/// *every* run regardless of whether a compile was actually about to happen,
-/// which is exactly the misleading behavior a user reported.
+/// compile for a hang. Only relevant for explicit `--device coreml`; skipped
+/// entirely once the cache already has content (`coreml_cache_has_content`).
 fn maybe_emit_coreml_notice(device: Device, cache_dir: Option<&Path>) {
-    let will_try_coreml = matches!(device, Device::Coreml)
-        || matches!(device, Device::Auto if coreml_capable_target());
-    if will_try_coreml
+    if matches!(device, Device::Coreml)
+        && coreml_capable_target()
         && !coreml_cache_has_content(cache_dir)
         && COREML_NOTICE_SHOWN
             .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
@@ -92,6 +90,13 @@ fn maybe_emit_coreml_notice(device: Device, cache_dir: Option<&Path>) {
 
 /// Builds an ONNX Runtime session from a file on disk (used for the
 /// downloaded encoder/decoder-joint graphs).
+///
+/// An ORT "optimized-graph" disk cache (`with_optimized_model_path` +
+/// `GraphOptimizationLevel::Disable` on the cached reload) was tried here and
+/// reverted: measured directly, loading the serialized "optimized" file was
+/// *slower* than just re-optimizing the original file fresh each time
+/// (~1.7-2.7s vs. ~1.4s for the encoder), not faster — the dominant per-load
+/// cost isn't the optimization passes themselves (research.md §15).
 pub fn build_session_from_file(
     path: &Path,
     device: Device,

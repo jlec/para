@@ -1,38 +1,35 @@
 <!--
 Sync Impact Report
 ==================
-Version change: (none, template) → 1.0.0
-Rationale: Initial ratification — first concrete fill of the constitution template.
+Version change: 1.0.0 → 2.0.0
+Rationale: Principle VI redefined in a backward-incompatible way (MAJOR per
+this document's own versioning policy) — CoreML is no longer the default
+`Device::Auto` execution path.
 
-Modified principles: N/A (initial adoption)
+Modified principles:
+- VI. Apple Silicon Is a First-Class Target — previously mandated CoreML as
+  the default, non-opt-in execution provider on arm64 macOS. Redefined:
+  Apple Silicon support itself remains mandatory and first-class, but the
+  *default* execution provider is now whichever one is actually measured to
+  perform best for the models this tool ships (currently CPU — CoreML
+  measured zero speedup for the NVIDIA Parakeet family and required a
+  stability workaround for a real ONNX Runtime crash with these models'
+  external-data storage, research.md §15). CoreML remains available via the
+  explicit `--device coreml` flag, unchanged from before.
 
-Added sections:
-- Core Principles I–VIII (Single Binary No Daemon, Offline After Setup,
-  Stdout Is Sacred, Fail Loud Fail Fast, No Fabricated Data,
-  Apple Silicon First-Class Target, Minimal Runtime Dependencies,
-  Composability Over Features)
-- Engineering Standards (replaces [SECTION_2_NAME])
-- Governance
+Added sections: none
 
-Removed sections:
-- [SECTION_3_NAME] / [SECTION_3_CONTENT] — no additional workflow/review
-  content was supplied; omitted rather than left as an unfilled placeholder.
-  TODO(SECTION_3): add a Development Workflow section if/when review or
-  release process rules are defined.
+Removed sections: none
 
 Templates requiring updates:
+- ✅ specs/001-media-transcription/plan.md — Constitution Check's Principle VI
+  row updated to match (already done alongside this amendment).
 - ✅ .specify/templates/plan-template.md — Constitution Check section derives
   its gates from this file at runtime; no hardcoded principle names to sync.
 - ✅ .specify/templates/spec-template.md — no constitution-specific references.
 - ✅ .specify/templates/tasks-template.md — no constitution-specific references.
-- ✅ No .specify/templates/commands/*.md directory present.
-- ✅ No README.md or docs/quickstart.md present in repo root.
 
-Follow-up TODOs:
-- TODO(RATIFICATION_DATE): original adoption date predating this fill is
-  unknown; set to the date of this initial ratification.
-- TODO(SECTION_3): consider adding a Development Workflow / Review Process
-  section once those practices are decided.
+Follow-up TODOs: none
 -->
 
 # para Constitution
@@ -91,13 +88,24 @@ download and load path that Principle IV enforces.
 
 ### VI. Apple Silicon Is a First-Class Target
 
-CoreML acceleration on arm64 macOS MUST work out of the box. It MUST NOT
-require manual configuration, extra flags, or separate build steps beyond
-what any other supported target needs.
+Apple Silicon MUST be a fully-supported target requiring no manual
+configuration, extra flags, or separate build steps beyond what any other
+supported target needs. CoreML acceleration MUST remain available as an
+explicit, documented option (`--device coreml`) for anyone who wants to use
+it, but MUST NOT be required by default: `--device auto`'s default execution
+path is whichever provider is actually measured to perform best for the
+models this tool ships, re-verified whenever that changes.
 
-**Rationale**: Apple Silicon is a primary deployment target, not a
-secondary optimization; treating it as an afterthought would degrade the
-experience for most users of a local-first, on-device tool.
+**Rationale**: Apple Silicon is a primary deployment target, not a secondary
+optimization — but "first-class support" means the tool runs its best on
+that hardware, not that a specific execution provider is mandatory
+regardless of whether it helps. Measured directly against this project's
+NVIDIA Parakeet models (research.md §15): CoreML produced no measurable
+speedup over the CPU execution provider, and required a stability workaround
+for a real ONNX Runtime crash with these models' external-data storage.
+Defaulting to it anyway would add real complexity and risk for zero user
+benefit, which itself would degrade the Apple Silicon experience this
+principle exists to protect.
 
 ### VII. Minimal Runtime Dependencies
 
@@ -150,4 +158,4 @@ date fields below MUST be updated.
 these principles before merge. A violation MUST be either fixed or justified
 in writing (e.g., in a plan's Complexity Tracking table) before it can land.
 
-**Version**: 1.0.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-09
+**Version**: 2.0.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-14
