@@ -45,7 +45,7 @@ during implementation once this was confirmed against the real files.
 
 **Testing**: `cargo test` for inline unit tests; a `tests/contract/` suite for CLI-surface contracts (stdout/stderr separation, exit codes, `--list-models` shape, output schemas); `tests/integration.rs` gated behind an `integration` feature for tests that require a real cached model
 
-**Target Platform**: darwin/arm64 (primary, CoreML-accelerated), darwin/amd64 and linux/amd64 (CPU execution provider)
+**Target Platform**: darwin/arm64 (primary; CPU execution provider by default, CoreML available via explicit `--device coreml` — research.md §15), darwin/amd64 and linux/amd64 (CPU execution provider)
 
 **Project Type**: Single-project CLI binary (no frontend/backend split)
 

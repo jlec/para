@@ -274,6 +274,45 @@ mod tests {
     use super::*;
     use crate::inference::ModelKind;
     use crate::model::registry::{FileRole, TimingGranularity};
+    use std::net::TcpListener;
+    use std::time::Instant;
+
+    /// Spawns a one-shot HTTP server on an OS-assigned local port that
+    /// responds to a single request with a fixed body, then exits. Lets
+    /// download-path tests exercise real HTTP round-trips (checksum
+    /// verification, successful download, refresh) without depending on the
+    /// network or a fixed port.
+    fn spawn_single_response_server(body: &'static [u8]) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.write_all(body);
+            }
+        });
+        format!("http://{addr}/file")
+    }
+
+    fn leak(s: String) -> &'static str {
+        Box::leak(s.into_boxed_str())
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
 
     fn fixture_entry() -> ModelEntry {
         ModelEntry {
@@ -313,5 +352,162 @@ mod tests {
             cache_state_in(&entry, Some(dir.path())).unwrap(),
             CacheState::Cached
         );
+    }
+
+    #[test]
+    fn download_one_maps_an_unparseable_url_to_a_retryable_network_error() {
+        let file = ModelFile {
+            name: "x.bin",
+            role: FileRole::Vocab,
+            source_url: "not a valid url",
+            sha256: None,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let err = download_one(&file, dir.path()).unwrap_err();
+        assert!(matches!(err, DownloadError::Network { .. }));
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn io_errors_are_retryable() {
+        let err = DownloadError::Io {
+            file: "x".into(),
+            source: std::io::Error::other("disk full"),
+        };
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn checksum_mismatch_is_not_retryable() {
+        let err = DownloadError::ChecksumMismatch {
+            file: "x".into(),
+            expected: "aaa".into(),
+            actual: "bbb".into(),
+        };
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn download_one_succeeds_and_writes_the_checksum_verified_file() {
+        let body: &'static [u8] = b"hello world";
+        let url = spawn_single_response_server(body);
+        let expected_sha = sha256_hex(body);
+        let file = ModelFile {
+            name: "test.bin",
+            role: FileRole::Vocab,
+            source_url: leak(url),
+            sha256: Some(leak(expected_sha)),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        download_one(&file, dir.path()).unwrap();
+        assert_eq!(fs::read(dir.path().join("test.bin")).unwrap(), body);
+    }
+
+    #[test]
+    fn download_one_fails_and_leaves_no_file_behind_on_checksum_mismatch() {
+        let body: &'static [u8] = b"hello world";
+        let url = spawn_single_response_server(body);
+        let file = ModelFile {
+            name: "test.bin",
+            role: FileRole::Vocab,
+            source_url: leak(url),
+            sha256: Some("0000000000000000000000000000000000000000000000000000000000000000"),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let err = download_one(&file, dir.path()).unwrap_err();
+        assert!(matches!(err, DownloadError::ChecksumMismatch { .. }));
+        assert!(!err.is_retryable());
+        assert!(!dir.path().join("test.bin").exists());
+        assert!(!dir.path().join("test.bin.tmp").exists());
+    }
+
+    #[test]
+    fn download_one_with_retry_does_not_retry_a_checksum_mismatch() {
+        let body: &'static [u8] = b"some content";
+        let url = spawn_single_response_server(body);
+        let file = ModelFile {
+            name: "test.bin",
+            role: FileRole::Vocab,
+            source_url: leak(url),
+            sha256: Some("deadbeef"),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let start = Instant::now();
+        assert!(download_one_with_retry(&file, dir.path()).is_err());
+        // A single failed attempt with no backoff sleep — nowhere near the
+        // 1s+2s a retried checksum mismatch would cost.
+        assert!(start.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn download_one_with_retry_retries_network_failures_with_backoff_then_gives_up() {
+        // Port 1 (tcpmux) refuses connections instantly on essentially any
+        // machine without needing a real unreachable host (which could hang
+        // on DNS resolution instead of failing fast). This test's ~3s
+        // runtime is the real cost of MAX_DOWNLOAD_ATTEMPTS=3's exponential
+        // backoff (1s then 2s between attempts) — verifying backoff
+        // genuinely happens, not mocking it away.
+        let file = ModelFile {
+            name: "test.bin",
+            role: FileRole::Vocab,
+            source_url: "http://127.0.0.1:1/file",
+            sha256: None,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let start = Instant::now();
+        assert!(download_one_with_retry(&file, dir.path()).is_err());
+        assert!(start.elapsed() >= Duration::from_secs(3));
+    }
+
+    #[test]
+    fn download_lock_cleans_up_stale_tmp_files_on_acquire_and_removes_itself_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path()).unwrap();
+        let stale = dir.path().join("leftover.tmp");
+        fs::write(&stale, b"partial").unwrap();
+        {
+            let _lock = DownloadLock::acquire(dir.path()).unwrap();
+            assert!(
+                !stale.exists(),
+                "stale .tmp file should be cleaned up on acquire"
+            );
+            assert!(dir.path().join("download.lock").exists());
+        }
+        assert!(
+            !dir.path().join("download.lock").exists(),
+            "lock file should be removed once the guard is dropped"
+        );
+    }
+
+    #[test]
+    fn refresh_deletes_and_redownloads_cached_files() {
+        let new_body: &'static [u8] = b"fresh content";
+        let url = spawn_single_response_server(new_body);
+        let expected_sha = sha256_hex(new_body);
+        let files: &'static [ModelFile] = Box::leak(
+            vec![ModelFile {
+                name: "vocab.txt",
+                role: FileRole::Vocab,
+                source_url: leak(url),
+                sha256: Some(leak(expected_sha)),
+            }]
+            .into_boxed_slice(),
+        );
+        let entry = ModelEntry {
+            id: "refresh-test-model",
+            description: "fixture",
+            kind: ModelKind::Ctc,
+            timing_granularity: TimingGranularity::WholeFile,
+            is_default: false,
+            files,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let model_dir = dir.path().join("models").join(entry.id);
+        fs::create_dir_all(&model_dir).unwrap();
+        fs::write(model_dir.join("vocab.txt"), b"stale old content").unwrap();
+
+        refresh(&entry, Some(dir.path())).unwrap();
+
+        assert_eq!(fs::read(model_dir.join("vocab.txt")).unwrap(), new_body);
     }
 }

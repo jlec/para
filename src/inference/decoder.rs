@@ -104,6 +104,17 @@ const NUM_DURATION_BINS: usize = 5;
 /// could in principle spin forever on one frame.
 const MAX_TOKENS_PER_STEP: usize = 10;
 
+/// Minimum log-probability margin a CTC frame's winning non-blank token must
+/// hold over blank to be accepted, rather than treated as blank (research.md
+/// §16). Measured empirically against the real `parakeet-ctc-0.6b` model, not
+/// guessed (Constitution Principle V): isolated single-frame hallucinations on
+/// out-of-distribution pure-digital-silence input showed margins of 0.62,
+/// 1.26, and 2.14; genuine spoken tokens (including the softest real
+/// disfluency observed, a synthesized "um") never dropped below 3.14, and
+/// crisp phonemes typically exceed 7. 2.5 sits with real margin on both
+/// sides of every sample measured.
+const MIN_BLANK_MARGIN: f32 = 2.5;
+
 /// Encoder-frame duration in seconds: the bundled preprocessor emits mel
 /// frames at 100/sec (10ms hop, measured directly — research.md §6), and the
 /// encoder subsamples by 8x, so each encoder-output frame spans 80ms.
@@ -144,24 +155,44 @@ fn frame_slice(encoder_output: &EncoderOutput, t: usize) -> Vec<f32> {
         .collect()
 }
 
+/// The prediction network's autoregressive state, carried across chunk
+/// boundaries by [`decode_tdt`] (research.md §17) rather than reset per
+/// chunk: chunking exists only to bound single-pass encoder memory/latency
+/// (research.md §6), not to mark separate utterances, so the decoder's LSTM
+/// state and previous-token context should persist across a chunk split the
+/// same way it does across any other encoder frame.
+struct DecoderState {
+    state1: Vec<f32>,
+    state2: Vec<f32>,
+    prev_token: i32,
+}
+
+impl DecoderState {
+    fn new(blank_id: usize) -> Self {
+        Self {
+            state1: vec![0.0f32; 2 * PREDNET_HIDDEN],
+            state2: vec![0.0f32; 2 * PREDNET_HIDDEN],
+            prev_token: blank_id as i32,
+        }
+    }
+}
+
 /// Greedy TDT decode for one chunk's encoder output, following the reference
 /// `onnx-asr` `NemoConformerTdt`/`_AsrWithTransducerDecoding` algorithm
 /// (verified against the real Python source on GitHub, not re-derived from
-/// tensor shapes alone — Constitution Principle V).
+/// tensor shapes alone — Constitution Principle V). `state` is owned by the
+/// caller ([`decode_tdt`]) and carried across chunks, not reset per call.
 fn decode_tdt_chunk(
     encoder_output: &EncoderOutput,
     decoder_joint: &mut Session,
     vocab: &Vocab,
     frame_offset: usize,
+    state: &mut DecoderState,
 ) -> anyhow::Result<Vec<TokenTiming>> {
     let blank_id = vocab
         .blank_id()
         .context("vocab has no blank token; TDT decode requires one")?;
     let vocab_size = vocab.len();
-
-    let mut state1 = vec![0.0f32; 2 * PREDNET_HIDDEN];
-    let mut state2 = vec![0.0f32; 2 * PREDNET_HIDDEN];
-    let mut prev_token = blank_id as i32;
 
     let mut out = Vec::new();
     let mut t = 0usize;
@@ -171,12 +202,12 @@ fn decode_tdt_chunk(
         let frame = frame_slice(encoder_output, t);
         let encoder_outputs =
             Tensor::from_array(([1usize, encoder_output.hidden_size, 1usize], frame))?;
-        let targets = Tensor::from_array(([1usize, 1usize], vec![prev_token]))?;
+        let targets = Tensor::from_array(([1usize, 1usize], vec![state.prev_token]))?;
         let target_length = Tensor::from_array(([1usize], vec![1i32]))?;
         let input_states_1 =
-            Tensor::from_array(([2usize, 1usize, PREDNET_HIDDEN], state1.clone()))?;
+            Tensor::from_array(([2usize, 1usize, PREDNET_HIDDEN], state.state1.clone()))?;
         let input_states_2 =
-            Tensor::from_array(([2usize, 1usize, PREDNET_HIDDEN], state2.clone()))?;
+            Tensor::from_array(([2usize, 1usize, PREDNET_HIDDEN], state.state2.clone()))?;
 
         let outputs = decoder_joint.run(ort::inputs![
             "encoder_outputs" => encoder_outputs,
@@ -199,9 +230,9 @@ fn decode_tdt_chunk(
         if token != blank_id {
             let (_, new_state1) = outputs["output_states_1"].try_extract_tensor::<f32>()?;
             let (_, new_state2) = outputs["output_states_2"].try_extract_tensor::<f32>()?;
-            state1 = new_state1.to_vec();
-            state2 = new_state2.to_vec();
-            prev_token = token as i32;
+            state.state1 = new_state1.to_vec();
+            state.state2 = new_state2.to_vec();
+            state.prev_token = token as i32;
             out.push(TokenTiming {
                 token_id: token,
                 frame: frame_offset + t,
@@ -224,6 +255,9 @@ fn decode_tdt_chunk(
 /// Runs TDT greedy decode across every chunk from `engine::encode_chunked`,
 /// then groups the flat token stream into phrase-level segments and builds
 /// the final `Transcript` (data-model.md's `Segment` timing granularity).
+/// The decoder's autoregressive state carries across chunk boundaries
+/// (research.md §17) — chunking is a single-pass-encoder memory/latency
+/// bound (research.md §6), not an utterance boundary.
 pub fn decode_tdt(
     chunks: &[EncoderOutput],
     decoder_joint: &mut Session,
@@ -231,10 +265,20 @@ pub fn decode_tdt(
     model_id: &str,
     duration_secs: f64,
 ) -> anyhow::Result<Transcript> {
+    let blank_id = vocab
+        .blank_id()
+        .context("vocab has no blank token; TDT decode requires one")?;
+    let mut state = DecoderState::new(blank_id);
     let mut tokens = Vec::new();
     let mut frame_offset = 0usize;
     for chunk in chunks {
-        tokens.extend(decode_tdt_chunk(chunk, decoder_joint, vocab, frame_offset)?);
+        tokens.extend(decode_tdt_chunk(
+            chunk,
+            decoder_joint,
+            vocab,
+            frame_offset,
+            &mut state,
+        )?);
         frame_offset += chunk.frames;
     }
 
@@ -263,7 +307,14 @@ fn decode_ctc_chunk(
     let mut prev_token = blank_id;
     for t in 0..logprobs.frames {
         let frame = &logprobs.data[t * logprobs.vocab_size..(t + 1) * logprobs.vocab_size];
-        let token = argmax(frame);
+        let mut token = argmax(frame);
+        if token != blank_id && frame[token] - frame[blank_id] < MIN_BLANK_MARGIN {
+            // Below the confidence margin real speech tokens hold over blank
+            // (research.md §16) — likely an isolated low-confidence
+            // hallucination on silent/near-silent input (FR-015's "no
+            // detectable speech" edge case), not a genuine token.
+            token = blank_id;
+        }
         if token != blank_id && token != prev_token {
             out.push(TokenTiming {
                 token_id: token,
@@ -474,12 +525,14 @@ mod tests {
         let vocab = Vocab::load(file.path()).unwrap();
         let vocab_size = 3;
         // frames: one, one (repeat, collapsed), blank, two -> "one two"
+        // Margins well above MIN_BLANK_MARGIN so the confidence filter
+        // doesn't interfere with this test's collapse/drop-blank behavior.
         #[rustfmt::skip]
         let data = vec![
-            1.0, 0.0, 0.0, // frame 0: argmax "one"
-            1.0, 0.0, 0.0, // frame 1: argmax "one" (repeat of prev, dropped)
-            0.0, 0.0, 1.0, // frame 2: argmax blank
-            0.0, 1.0, 0.0, // frame 3: argmax "two"
+            5.0, 0.0, 0.0, // frame 0: argmax "one"
+            5.0, 0.0, 0.0, // frame 1: argmax "one" (repeat of prev, dropped)
+            0.0, 0.0, 5.0, // frame 2: argmax blank
+            0.0, 5.0, 0.0, // frame 3: argmax "two"
         ];
         let logprobs = CtcOutput {
             data,
@@ -489,5 +542,41 @@ mod tests {
         let tokens = decode_ctc_chunk(&logprobs, &vocab, 0).unwrap();
         let ids: Vec<usize> = tokens.iter().map(|t| t.token_id).collect();
         assert_eq!(ids, vec![0, 1]);
+    }
+
+    #[test]
+    fn ctc_decode_suppresses_low_margin_token_as_blank() {
+        // vocab: 0="uh", 1=<blk>. Winning token's margin over blank (0.3) is
+        // below MIN_BLANK_MARGIN — this is the shape of the real
+        // hallucination measured on out-of-distribution silent input
+        // (research.md §16): a low-confidence non-blank argmax that should be
+        // treated as blank, not emitted as a real token.
+        let file = write_vocab(&["▁uh 0", "<blk> 1"]);
+        let vocab = Vocab::load(file.path()).unwrap();
+        let data = vec![0.3, 0.0];
+        let logprobs = CtcOutput {
+            data,
+            frames: 1,
+            vocab_size: 2,
+        };
+        let tokens = decode_ctc_chunk(&logprobs, &vocab, 0).unwrap();
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn ctc_decode_accepts_token_at_the_margin_boundary() {
+        // Same shape as above but with a margin just over MIN_BLANK_MARGIN —
+        // confirms the filter doesn't suppress genuinely confident tokens.
+        let file = write_vocab(&["▁uh 0", "<blk> 1"]);
+        let vocab = Vocab::load(file.path()).unwrap();
+        let data = vec![MIN_BLANK_MARGIN + 0.1, 0.0];
+        let logprobs = CtcOutput {
+            data,
+            frames: 1,
+            vocab_size: 2,
+        };
+        let tokens = decode_ctc_chunk(&logprobs, &vocab, 0).unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token_id, 0);
     }
 }

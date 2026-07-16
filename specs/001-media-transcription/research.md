@@ -685,6 +685,85 @@ was never on the table). Model loading dominates over decode for short clips; SC
 measurably faster than TDT on the same input) still holds and was re-confirmed on a 60s clip in
 T045, where decode cost is large enough to outweigh the shared fixed model-load cost.
 
+## 16. CTC silence hallucination fixed with an empirically-measured blank-margin threshold (2026-07-14)
+
+**Context**: `/speckit-converge` (Phase 8, T047) found that 3s of pure digital silence through
+`parakeet-ctc-0.6b` deterministically produced the transcript `"uh"` (exit 0), while the identical
+input through the default TDT model correctly returned an empty transcript — an inconsistency
+spec.md's silence edge case never resolved.
+
+**Investigation**: Instrumented `decode_ctc_chunk` to dump each frame's winning (argmax) token's
+log-probability margin over blank. Against 1s/2s/3s/5s/10s of pure digital-zero silence: 5s and 10s
+produced no hallucination at all; 1s, 2s, and 3s each produced exactly one isolated single-frame
+non-blank argmax, with margins of 2.1449, 0.6240, and 1.2588 respectively — a real but modest edge
+over blank, not a razor-thin tie, and not reproducible on a more realistic quiet-room-tone (low-level
+white noise) fixture, which never hallucinated at all. This points to pure zero-signal audio being
+genuinely out-of-distribution for a model trained on real recordings, not a general silence-handling
+gap.
+
+Checked genuine speech for comparison, including soft filler words (the case most likely to
+false-negative under a confidence filter): crisp phonemes routinely showed margins of 7-12; the
+softest real token observed, a synthesized "um" disfluency, still showed 3.1394 — comfortably above
+every hallucination margin measured. A separately synthesized "uh...maybe" utterance didn't surface
+an "uh" token in the CTC output at all (the model itself didn't recognize it as one), so filtering
+low-margin frames was not observed to cost any real recognized disfluency in this testing.
+
+**Decision**: Added `MIN_BLANK_MARGIN = 2.5` in `src/inference/decoder.rs` — a CTC frame's winning
+non-blank token is only accepted if it beats blank by at least this log-probability margin; otherwise
+the frame is treated as blank. Chosen to sit with real margin above every measured hallucination
+(max 2.14) and below every measured genuine token (min 3.14), not at either boundary. Scoped to CTC
+only, per T047 — TDT already handles this input correctly and was left unchanged.
+
+**Caveat**: This is calibrated against the samples measured here (digital silence at several
+durations, one synthesized soft disfluency, several crisp real utterances), not an exhaustive sweep
+of real-world quiet/mumbled speech. The margin between the closest hallucination (2.14) and closest
+genuine token (3.14) observed is real but not huge — revisit if a future real recording surfaces a
+genuine soft token below 2.5 (a false negative) or a hallucination above it (unlikely given the
+out-of-distribution nature of the failure, but not proven impossible for all inputs).
+
+## 17. TDT chunk-boundary artifact reduced by carrying decoder state across chunks (2026-07-16)
+
+**Context**: `/speckit-converge` (Phase 8, T049) found that the TDT decoder's prediction-network
+LSTM state (`state1`/`state2`/`prev_token` in `decode_tdt_chunk`) was reset to a fresh
+beginning-of-utterance state at the start of every chunk, rather than carried across chunk
+boundaries — even though §6 chunking exists purely to bound single-pass encoder memory/latency, not
+to mark separate utterances. The originally reported symptom (a real 338s speech clip) was a
+genuine word-boundary corruption right at the 300s split: "chunk transcription" became "chunking.
+Transcription".
+
+**Decision**: Introduced a `DecoderState` struct (`state1`, `state2`, `prev_token`) owned by
+`decode_tdt` and threaded by `&mut` reference into `decode_tdt_chunk` for every chunk, instead of
+each chunk call initializing its own zeroed state. Single-chunk inputs (the overwhelming majority)
+are unaffected — the state is created once and used once either way.
+
+**Verification**: Generated a 436s synthesized clip (`say`) of 160 formulaic, distinctly numbered
+sentences ("Sentence number N of the test.") — long enough to require exactly 2 chunks split at the
+300s threshold, with the boundary landing inside sentence ~110, and a phrasing designed to make any
+boundary corruption obvious. Ran it through both the pre-fix and post-fix decoder (via `git stash` to
+get a true before/after on the *same* binary otherwise, not just an isolated after-only read) and
+diffed the two transcripts word-for-word rather than trusting a single read of the "after" output —
+this caught an initial wrong attribution (see below).
+
+Both transcripts share one identical error unrelated to chunking: "Sentence number 111" is
+transcribed as "Sentence number 11" in *both* the pre-fix and post-fix runs — a genuine numeral
+mis-recognition (acoustically ambiguous regardless of decoder state), not a boundary artifact, and
+this change correctly leaves it untouched. The real, measured difference between the two runs is a
+spurious duplicated word: the pre-fix transcript has an extra hallucinated "Test." inserted between
+sentences 115 and 116 ("...of the test. Test. Sentence number 116...") that is absent from the
+post-fix transcript. That duplication sits in the same boundary-adjacent region as the chunk split and
+is gone once decoder state carries across the boundary — a real, verified, if narrow, improvement.
+
+**Caveat — not a complete fix**: This change addresses only half of what a chunk boundary can
+disrupt. The *decoder's* autoregressive state now persists correctly across the split (confirmed
+above: it removed one real duplicated-word artifact), but the *encoder* still runs each chunk's audio
+independently with no acoustic context from the adjacent chunk (no audio-level overlap was added), and
+the surviving numeral error shows some boundary-adjacent inaccuracy can remain regardless. A complete
+fix would additionally overlap a few seconds of audio between chunks and de-duplicate/merge the
+overlapping region's tokens — a larger and riskier change than this task's severity (MEDIUM) justified
+given the reference `onnx-asr` implementation itself has no such overlap-and-merge strategy to port
+and verify against (Constitution Principle V — no invented algorithm). Revisit only if a real
+recording surfaces a boundary artifact worse than what remains here.
+
 ## Summary of changes from the prior technical spec
 
 | Area                                                                 | Prior spec                                                                                      | Resolved here                                                                                                                                                                                                                                               | Why                                                                                                                                                                                  |
