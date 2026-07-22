@@ -11,11 +11,74 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// Audio sample rate throughout this pipeline (16 kHz mono — `audio.rs` transcodes to this).
 const SAMPLE_RATE: usize = 16_000;
 
-/// Single-pass chunk length, in seconds (research.md §6). Set well under the
+/// Threshold below which an input is processed in a single pass, never
+/// chunked (001-media-transcription research.md §6). Set well under the
 /// empirically-found ~400s hard cutoff (a fixed-size relative positional
 /// encoding buffer inside the TDT encoder graph), with margin for models that
-/// haven't been checked the same way yet.
-const CHUNK_SECONDS: f64 = 300.0;
+/// haven't been checked the same way yet. This is a separate concern from
+/// `CHUNK_SECONDS` below (003-reduce-memory-footprint data-model.md): this
+/// value only decides *whether* chunking happens, not how large each chunk
+/// is once it does.
+const SINGLE_PASS_THRESHOLD_SECONDS: f64 = 300.0;
+
+/// Size of each chunk once an input exceeds `SINGLE_PASS_THRESHOLD_SECONDS`
+/// (003-reduce-memory-footprint research.md's "actual fix"). ONNX Runtime's
+/// per-call working set for the encoder graph scales with this window, not
+/// with total recording length — bounding it here keeps peak memory flat
+/// regardless of how long the recording is, at the cost of more, smaller
+/// `session.run()` calls for long inputs. 30s (not research.md Phase 0's
+/// originally-tested 15s) is the real, tuned value: real-measurement
+/// content-parity testing on a long recording found 15s made the TDT
+/// transducer drop whole phrases near chunk boundaries even with overlap
+/// (`CHUNK_OVERLAP_SECONDS`); 30s keeps differences to cosmetic
+/// wording/punctuation only, matching the existing 300s chunking's own
+/// baseline quality, while still cutting peak memory roughly in half.
+const CHUNK_SECONDS: f64 = 30.0;
+
+/// Extra look-back *and* look-ahead audio (seconds) fed to the TDT encoder
+/// around each chunk's own range, so the encoder has acoustic context on
+/// both sides of a chunk boundary (003-reduce-memory-footprint research.md's
+/// follow-up finding: with zero overlap, small chunks made the transducer
+/// emit blank — dropping whole phrases — near boundaries, because the
+/// Conformer encoder had no context there; a left-only-context version still
+/// lost content, since the encoder needs lookahead too, not just lookback;
+/// the autoregressive decoder state itself is already threaded correctly
+/// across chunks and was never the problem). Only the frames corresponding
+/// to the chunk's own original, non-overlapping range are decoded
+/// (`trim_frames`) — the overlap on both sides is encoder-context only and
+/// is never decoded by any chunk, so nothing is ever decoded twice. CTC does
+/// not need this — measured separately to tolerate small chunks with no
+/// overlap at all, since its per-frame classification doesn't depend on
+/// carried decoder state the way the transducer's blank/emit decision does.
+const CHUNK_OVERLAP_SECONDS: f64 = 5.0;
+
+/// The TDT encoder's measured output frame rate — encoder frames per second
+/// of input audio (real, live measurement against `parakeet-tdt-0.6b-v3`;
+/// consistently ~12.5 across chunk durations from 10s to 100s, and matching
+/// FluidAudio's independently-published CoreML encoder's own 188 frames per
+/// 15s window — both fixed-size Conformer subsampling by the same factor).
+/// Used only to convert `CHUNK_OVERLAP_SECONDS` into a frame count to trim.
+const ENCODER_FRAMES_PER_SECOND: f64 = 12.5;
+
+/// Drops `lead` frames from the start and `tail` frames from the end of an
+/// encoder output's `[1, hidden_size, frames]` (hidden-major) buffer. Used to
+/// discard the look-back/look-ahead overlap regions' frames — after they've
+/// given the encoder context on both sides of a chunk boundary — before
+/// decoding, leaving only the frames covering the chunk's own original range.
+fn trim_frames(output: &mut EncoderOutput, lead: usize, tail: usize) {
+    if lead == 0 && tail == 0 {
+        return;
+    }
+    let new_frames = output.frames - lead - tail;
+    let mut new_data = Vec::with_capacity(output.hidden_size * new_frames);
+    for h in 0..output.hidden_size {
+        let start = h * output.frames + lead;
+        let end = start + new_frames;
+        new_data.extend_from_slice(&output.data[start..end]);
+    }
+    output.data = new_data;
+    output.frames = new_frames;
+}
 
 static COREML_NOTICE_SHOWN: AtomicBool = AtomicBool::new(false);
 
@@ -136,18 +199,22 @@ pub struct EncoderOutput {
 }
 
 /// Splits `total_samples` into sequential, non-overlapping ranges of at most
-/// `CHUNK_SECONDS` each (research.md §6). Returns a single range spanning the
-/// whole input when it fits in one chunk — single-pass inputs are never
-/// forced to chunk just to produce progress output (FR-023).
+/// `CHUNK_SECONDS` each, once the input exceeds `SINGLE_PASS_THRESHOLD_SECONDS`
+/// (001-media-transcription research.md §6; 003-reduce-memory-footprint
+/// data-model.md). Returns a single range spanning the whole input when it
+/// fits within the single-pass threshold — single-pass inputs are never
+/// forced to chunk just to produce progress output (FR-023) or to bound
+/// memory they don't need bounding for.
 fn chunk_ranges(total_samples: usize) -> Vec<Range<usize>> {
-    let chunk_len = (CHUNK_SECONDS * SAMPLE_RATE as f64) as usize;
-    if total_samples <= chunk_len {
+    let single_pass_len = (SINGLE_PASS_THRESHOLD_SECONDS * SAMPLE_RATE as f64) as usize;
+    if total_samples <= single_pass_len {
         // A single range representing the whole (unchunked) input, not a
         // sequence of per-sample ranges -- clippy's suggested rewrite would
         // change the meaning here.
         #[allow(clippy::single_range_in_vec_init)]
         return vec![0..total_samples];
     }
+    let chunk_len = (CHUNK_SECONDS * SAMPLE_RATE as f64) as usize;
     let mut ranges = Vec::new();
     let mut start = 0;
     while start < total_samples {
@@ -178,24 +245,50 @@ fn run_encoder(session: &mut Session, features: &Features) -> anyhow::Result<Enc
 }
 
 /// Runs the full preprocessor-then-encoder pass over `samples`, splitting
-/// into chunks per [`chunk_ranges`] and emitting `"transcribing chunk N of
-/// M"` to stderr for each chunk when more than one is needed (FR-023).
+/// into chunks per [`chunk_ranges`]. Reports half of each chunk's audio
+/// duration to `progress` once that chunk's encode completes (spec
+/// 002-transcription-progress) — the other half is credited once that
+/// chunk's *decode* completes (`decoder::decode_tdt`/`decode_ctc`), which is
+/// also where the non-interactive plain-text milestone (extending spec
+/// 001's FR-023 line) is now emitted, since a chunk isn't actually done
+/// being transcribed until both passes finish.
 pub fn encode_chunked(
     samples: &[f32],
     preprocessor: &mut mel::Preprocessor,
     encoder: &mut Session,
+    progress: &mut crate::progress::TranscriptionProgress,
 ) -> anyhow::Result<Vec<EncoderOutput>> {
     let ranges = chunk_ranges(samples.len());
-    let total = ranges.len();
+    let overlap_samples = (CHUNK_OVERLAP_SECONDS * SAMPLE_RATE as f64) as usize;
+    let total_samples = samples.len();
     ranges
         .into_iter()
-        .enumerate()
-        .map(|(i, range)| {
-            if total > 1 {
-                eprintln!("transcribing chunk {} of {total}", i + 1);
+        .map(|range| {
+            let chunk_duration_secs = range.len() as f64 / SAMPLE_RATE as f64;
+            let encode_start = range.start.saturating_sub(overlap_samples);
+            let encode_end = (range.end + overlap_samples).min(total_samples);
+            let lead_len = range.start - encode_start;
+            let tail_len = encode_end - range.end;
+            let features = preprocessor.extract(&samples[encode_start..encode_end])?;
+            let mut output = run_encoder(encoder, &features)?;
+            if lead_len > 0 || tail_len > 0 {
+                let to_frames = |secs: f64| (secs * ENCODER_FRAMES_PER_SECOND).floor() as usize;
+                let lead_trim = to_frames(lead_len as f64 / SAMPLE_RATE as f64);
+                let tail_trim = to_frames(tail_len as f64 / SAMPLE_RATE as f64);
+                // Never trim away the whole chunk even if rounding is generous.
+                let max_trim = output.frames.saturating_sub(1);
+                let (lead_trim, tail_trim) = if lead_trim + tail_trim > max_trim {
+                    (
+                        lead_trim.min(max_trim),
+                        tail_trim.min(max_trim - lead_trim.min(max_trim)),
+                    )
+                } else {
+                    (lead_trim, tail_trim)
+                };
+                trim_frames(&mut output, lead_trim, tail_trim);
             }
-            let features = preprocessor.extract(&samples[range])?;
-            run_encoder(encoder, &features)
+            progress.advance_encoded(chunk_duration_secs);
+            Ok(output)
         })
         .collect()
 }
@@ -230,24 +323,23 @@ fn run_ctc(session: &mut Session, features: &Features) -> anyhow::Result<CtcOutp
     })
 }
 
-/// CTC counterpart to [`encode_chunked`] — same chunking/progress-message
+/// CTC counterpart to [`encode_chunked`] — same chunking/progress-reporting
 /// behavior, different per-chunk model call and output layout.
 pub fn encode_chunked_ctc(
     samples: &[f32],
     preprocessor: &mut mel::Preprocessor,
     model: &mut Session,
+    progress: &mut crate::progress::TranscriptionProgress,
 ) -> anyhow::Result<Vec<CtcOutput>> {
     let ranges = chunk_ranges(samples.len());
-    let total = ranges.len();
     ranges
         .into_iter()
-        .enumerate()
-        .map(|(i, range)| {
-            if total > 1 {
-                eprintln!("transcribing chunk {} of {total}", i + 1);
-            }
+        .map(|range| {
+            let chunk_duration_secs = range.len() as f64 / SAMPLE_RATE as f64;
             let features = preprocessor.extract(&samples[range])?;
-            run_ctc(model, &features)
+            let output = run_ctc(model, &features)?;
+            progress.advance_encoded(chunk_duration_secs);
+            Ok(output)
         })
         .collect()
 }
@@ -257,23 +349,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn single_chunk_for_input_under_threshold() {
+    fn single_chunk_for_input_under_single_pass_threshold() {
         let ranges = chunk_ranges(100 * SAMPLE_RATE);
         assert_eq!(ranges, vec![0..100 * SAMPLE_RATE]);
     }
 
+    /// Well over `CHUNK_SECONDS` (15s) but still under
+    /// `SINGLE_PASS_THRESHOLD_SECONDS` (300s) — must not be chunked at all.
+    /// Chunking only kicks in once the single-pass threshold is exceeded;
+    /// `CHUNK_SECONDS` alone no longer gates that decision
+    /// (003-reduce-memory-footprint data-model.md).
     #[test]
-    fn splits_into_multiple_chunks_over_threshold() {
-        let total = (CHUNK_SECONDS as usize + 60) * SAMPLE_RATE;
+    fn single_chunk_when_over_chunk_seconds_but_under_single_pass_threshold() {
+        let total = 200 * SAMPLE_RATE;
         let ranges = chunk_ranges(total);
-        assert_eq!(ranges.len(), 2);
-        assert_eq!(ranges[0], 0..(CHUNK_SECONDS as usize * SAMPLE_RATE));
-        assert_eq!(ranges[1], (CHUNK_SECONDS as usize * SAMPLE_RATE)..total);
+        assert_eq!(ranges, vec![0..total]);
+    }
+
+    #[test]
+    fn splits_into_chunk_seconds_windows_once_over_single_pass_threshold() {
+        let total = (SINGLE_PASS_THRESHOLD_SECONDS as usize + 60) * SAMPLE_RATE;
+        let ranges = chunk_ranges(total);
+        let chunk_len = CHUNK_SECONDS as usize * SAMPLE_RATE;
+        let expected_chunks = total.div_ceil(chunk_len);
+        assert_eq!(ranges.len(), expected_chunks);
+        assert_eq!(ranges[0], 0..chunk_len);
+        assert!(
+            ranges
+                .iter()
+                .take(ranges.len() - 1)
+                .all(|r| r.len() == chunk_len)
+        );
     }
 
     #[test]
     fn chunk_ranges_cover_input_with_no_gaps_or_overlap() {
-        let total = (2.0 * CHUNK_SECONDS) as usize * SAMPLE_RATE + 12345;
+        let total = (SINGLE_PASS_THRESHOLD_SECONDS as usize + 2 * CHUNK_SECONDS as usize)
+            * SAMPLE_RATE
+            + 12345;
         let ranges = chunk_ranges(total);
         assert_eq!(ranges[0].start, 0);
         assert_eq!(ranges.last().unwrap().end, total);
@@ -298,9 +411,16 @@ mod tests {
 
     #[test]
     fn exact_multiple_of_chunk_length_does_not_add_empty_trailing_chunk() {
-        let total = CHUNK_SECONDS as usize * SAMPLE_RATE;
+        let chunk_len = CHUNK_SECONDS as usize * SAMPLE_RATE;
+        let total = (SINGLE_PASS_THRESHOLD_SECONDS as usize + CHUNK_SECONDS as usize) * SAMPLE_RATE;
+        assert_eq!(
+            total % chunk_len,
+            0,
+            "test fixture must be an exact multiple"
+        );
         let ranges = chunk_ranges(total);
-        assert_eq!(ranges, vec![0..total]);
+        assert!(ranges.iter().all(|r| !r.is_empty()));
+        assert_eq!(ranges.last().unwrap().end, total);
     }
 
     /// Exercises `encode_chunked` against the real, live-downloaded
@@ -327,7 +447,9 @@ mod tests {
         let mut encoder = build_session_from_file(&encoder_path, Device::Cpu, None).unwrap();
 
         let samples = vec![0.0f32; 2 * SAMPLE_RATE];
-        let outputs = encode_chunked(&samples, &mut preprocessor, &mut encoder).unwrap();
+        let mut progress = crate::progress::TranscriptionProgress::new(true);
+        let outputs =
+            encode_chunked(&samples, &mut preprocessor, &mut encoder, &mut progress).unwrap();
 
         assert_eq!(outputs.len(), 1);
         assert_eq!(outputs[0].hidden_size, 1024);

@@ -264,6 +264,7 @@ pub fn decode_tdt(
     vocab: &Vocab,
     model_id: &str,
     duration_secs: f64,
+    progress: &mut crate::progress::TranscriptionProgress,
 ) -> anyhow::Result<Transcript> {
     let blank_id = vocab
         .blank_id()
@@ -271,7 +272,8 @@ pub fn decode_tdt(
     let mut state = DecoderState::new(blank_id);
     let mut tokens = Vec::new();
     let mut frame_offset = 0usize;
-    for chunk in chunks {
+    let total_chunks = chunks.len();
+    for (i, chunk) in chunks.iter().enumerate() {
         tokens.extend(decode_tdt_chunk(
             chunk,
             decoder_joint,
@@ -280,6 +282,11 @@ pub fn decode_tdt(
             &mut state,
         )?);
         frame_offset += chunk.frames;
+        progress.advance_decoded(
+            i + 1,
+            total_chunks,
+            chunk.frames as f64 * ENCODER_FRAME_SECONDS,
+        );
     }
 
     let text = vocab.decode(&tokens.iter().map(|t| t.token_id as i64).collect::<Vec<_>>());
@@ -335,12 +342,19 @@ pub fn decode_ctc(
     vocab: &Vocab,
     model_id: &str,
     duration_secs: f64,
+    progress: &mut crate::progress::TranscriptionProgress,
 ) -> anyhow::Result<Transcript> {
     let mut tokens = Vec::new();
     let mut frame_offset = 0usize;
-    for chunk in chunks {
+    let total_chunks = chunks.len();
+    for (i, chunk) in chunks.iter().enumerate() {
         tokens.extend(decode_ctc_chunk(chunk, vocab, frame_offset)?);
         frame_offset += chunk.frames;
+        progress.advance_decoded(
+            i + 1,
+            total_chunks,
+            chunk.frames as f64 * ENCODER_FRAME_SECONDS,
+        );
     }
 
     let text = vocab.decode(&tokens.iter().map(|t| t.token_id as i64).collect::<Vec<_>>());

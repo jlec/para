@@ -104,15 +104,30 @@ pub fn transcode_to_wav(input: &Path, dest: &Path) -> anyhow::Result<()> {
 /// Stages stdin's raw bytes into a temp file so `ffmpeg` (which cannot seek
 /// arbitrary stdin streams for all formats) can operate on a real path
 /// (FR-002). The temp file is deleted automatically when dropped.
-pub fn stage_stdin() -> anyhow::Result<tempfile::NamedTempFile> {
-    use std::io::Read;
-    let mut buf = Vec::new();
-    std::io::stdin()
-        .read_to_end(&mut buf)
-        .context("failed to read audio data from stdin")?;
+pub fn stage_stdin(
+    progress: &mut crate::progress::TranscriptionProgress,
+) -> anyhow::Result<tempfile::NamedTempFile> {
+    use std::io::{Read, Write};
+
+    progress.start_reading_stdin();
     let mut file =
         tempfile::NamedTempFile::new().context("failed to create temp file for stdin input")?;
-    std::io::Write::write_all(&mut file, &buf).context("failed to stage stdin input to disk")?;
+    let mut stdin = std::io::stdin();
+    let mut buf = [0u8; 65536];
+    let mut total_read = 0u64;
+    loop {
+        let n = stdin
+            .read(&mut buf)
+            .context("failed to read audio data from stdin")?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n])
+            .context("failed to stage stdin input to disk")?;
+        total_read += n as u64;
+        progress.update_bytes_read(total_read);
+    }
+    progress.finish_reading_stdin();
     Ok(file)
 }
 

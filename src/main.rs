@@ -2,6 +2,7 @@ mod audio;
 mod inference;
 mod model;
 mod output;
+mod progress;
 
 use anyhow::Context;
 use clap::Parser;
@@ -50,6 +51,16 @@ struct Cli {
     /// Force a fresh re-download of the selected model's cached files.
     #[arg(long)]
     refresh_model: bool,
+
+    /// Suppress all progress output on stderr (errors are unaffected).
+    ///
+    /// `PARA_NO_PROGRESS` (any non-empty value) has the same effect — handled
+    /// manually in `run()` rather than via clap's `env` on this field, since
+    /// clap's bool+env parsing only accepts literal "true"/"false" and
+    /// rejects other values (e.g. "1") with a hard error, not the permissive
+    /// "any non-empty value" behavior contracts/cli-interface.md documents.
+    #[arg(long)]
+    no_progress: bool,
 }
 
 fn main() {
@@ -74,6 +85,10 @@ fn run() -> anyhow::Result<()> {
 
     let entry = resolve_model(cli.model.as_deref())?;
 
+    let no_progress =
+        cli.no_progress || std::env::var("PARA_NO_PROGRESS").is_ok_and(|v| !v.is_empty());
+    let mut progress = progress::TranscriptionProgress::new(no_progress);
+
     // Open the output destination up front, before any expensive work — an
     // unwritable path (no permission, no such directory) should fail as
     // fast as a bad input path, not only after a full transcription
@@ -94,7 +109,7 @@ fn run() -> anyhow::Result<()> {
     let (input_path, _stdin_guard) = match &cli.input {
         Some(path) => (path.clone(), None),
         None => {
-            let staged = audio::stage_stdin()?;
+            let staged = audio::stage_stdin(&mut progress)?;
             let path = staged.path().to_path_buf();
             (path, Some(staged))
         }
@@ -157,6 +172,8 @@ fn run() -> anyhow::Result<()> {
         );
     }
 
+    progress.start_model_loading();
+
     let mut preprocessor = inference::mel::Preprocessor::load(entry.kind, cli.device, cache_dir)
         .context("failed to load mel-spectrogram preprocessor")?;
 
@@ -177,27 +194,45 @@ fn run() -> anyhow::Result<()> {
                 cache_dir,
             )
             .context("failed to load decoder-joint model")?;
+            progress.finish_model_loading();
 
+            progress.start_transcription(probe.duration_secs);
             let chunks = inference::engine::encode_chunked(
                 &samples,
                 &mut preprocessor,
                 &mut encoder_session,
+                &mut progress,
             )?;
-            inference::decoder::decode_tdt(
+            let transcript = inference::decoder::decode_tdt(
                 &chunks,
                 &mut decoder_joint_session,
                 &vocab,
                 entry.id,
                 probe.duration_secs,
-            )?
+                &mut progress,
+            )?;
+            progress.finish_transcription();
+            transcript
         }
         ModelKind::Ctc => {
+            progress.finish_model_loading();
+
+            progress.start_transcription(probe.duration_secs);
             let chunks = inference::engine::encode_chunked_ctc(
                 &samples,
                 &mut preprocessor,
                 &mut encoder_session,
+                &mut progress,
             )?;
-            inference::decoder::decode_ctc(&chunks, &vocab, entry.id, probe.duration_secs)?
+            let transcript = inference::decoder::decode_ctc(
+                &chunks,
+                &vocab,
+                entry.id,
+                probe.duration_secs,
+                &mut progress,
+            )?;
+            progress.finish_transcription();
+            transcript
         }
     };
 

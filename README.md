@@ -59,9 +59,11 @@ para -i audio.mp3 --refresh-model
 | `--cache-dir <PATH>`             | OS cache dir                         | Where models are stored/looked up                                           |
 | `--list-models`                  | —                                     | Prints every model, its cache state, and the default; exits without transcribing |
 | `--refresh-model`                | —                                     | Deletes and re-downloads the selected model's cache before running          |
+| `--no-progress`                  | off                                   | Suppresses all progress output on stderr; errors are unaffected             |
 
 Environment variable overrides (used when the matching flag isn't passed): `PARA_MODEL`,
-`PARA_FORMAT`, `PARA_DEVICE`, `PARA_CACHE_DIR`.
+`PARA_FORMAT`, `PARA_DEVICE`, `PARA_CACHE_DIR`. `PARA_NO_PROGRESS` (any non-empty value) has the
+same effect as `--no-progress`.
 
 There is deliberately no standalone "remove a cached model" command — only `--refresh-model`,
 which always re-fetches afterward.
@@ -86,9 +88,13 @@ duration/timing head. `para` prints a note to stderr when this applies.
 - `srt`: standard SRT subtitle blocks (comma-separated milliseconds) — see
   `specs/001-media-transcription/contracts/output-srt.md`.
 
-stdout carries only the requested output — no banners, no progress. Everything else (download
-progress, per-chunk `"transcribing chunk N of M"` progress on long inputs, and all errors) goes to
-stderr.
+stdout carries only the requested output — no banners, no progress. Everything else goes to
+stderr: model-download progress, a brief "loading model" indicator on every run, and a progress
+indicator during transcription reflecting the fraction of audio processed so far with an adaptive
+ETA — an animated bar when stderr is an interactive terminal, or plain milestone lines (e.g.
+`"transcribing chunk N of M"`) when it isn't (redirected to a file, `TERM=dumb`/unset, or piped
+into another program). Pass `--no-progress` (or set `PARA_NO_PROGRESS`) to suppress all of this;
+errors are reported either way.
 
 ## Development
 

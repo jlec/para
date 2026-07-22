@@ -11,6 +11,8 @@ mod test_error_paths;
 mod test_model_unknown;
 #[path = "contract/test_no_standalone_remove.rs"]
 mod test_no_standalone_remove;
+#[path = "contract/test_progress_suppressed_errors.rs"]
+mod test_progress_suppressed_errors;
 
 #[cfg(feature = "integration")]
 #[path = "contract/test_json_output.rs"]
@@ -21,6 +23,21 @@ mod test_list_models;
 #[cfg(feature = "integration")]
 #[path = "contract/test_model_selection.rs"]
 mod test_model_selection;
+#[cfg(feature = "integration")]
+#[path = "contract/test_progress_env_var.rs"]
+mod test_progress_env_var;
+#[cfg(feature = "integration")]
+#[path = "contract/test_progress_non_interactive.rs"]
+mod test_progress_non_interactive;
+#[cfg(feature = "integration")]
+#[path = "contract/test_progress_quick_feedback.rs"]
+mod test_progress_quick_feedback;
+#[cfg(feature = "integration")]
+#[path = "contract/test_progress_stdout_untouched.rs"]
+mod test_progress_stdout_untouched;
+#[cfg(feature = "integration")]
+#[path = "contract/test_progress_suppressed.rs"]
+mod test_progress_suppressed;
 #[cfg(feature = "integration")]
 #[path = "contract/test_srt_output.rs"]
 mod test_srt_output;
