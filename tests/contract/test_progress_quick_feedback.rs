@@ -12,14 +12,7 @@ fn short_clip_still_shows_model_loading_feedback() {
     write_silence_wav(&input, 0.5);
 
     let output = Command::new(para_bin())
-        .args([
-            "-i",
-            input.to_str().unwrap(),
-            "--device",
-            "cpu",
-            "--model",
-            "parakeet-ctc-0.6b",
-        ])
+        .args(["-i", input.to_str().unwrap(), "--device", "cpu"])
         .output()
         .unwrap();
 

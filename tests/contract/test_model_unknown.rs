@@ -24,7 +24,6 @@ fn unknown_model_lists_valid_ids_and_does_not_transcribe() {
     assert!(stderr.contains("unknown model"), "stderr: {stderr}");
     assert!(stderr.contains("parakeet-tdt-0.6b-v3"), "stderr: {stderr}");
     assert!(stderr.contains("parakeet-tdt-0.6b-v2"), "stderr: {stderr}");
-    assert!(stderr.contains("parakeet-ctc-0.6b"), "stderr: {stderr}");
     // Confirms model resolution failed before even touching the (nonexistent)
     // input file — otherwise the error would be about the missing file, not
     // the unknown model.

@@ -1,29 +1,38 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.0.0 → 2.0.0
-Rationale: Principle VI redefined in a backward-incompatible way (MAJOR per
-this document's own versioning policy) — CoreML is no longer the default
-`Device::Auto` execution path.
+Version change: 2.0.0 → 3.0.0
+Rationale: Principle VI redefined again in a backward-incompatible way (MAJOR
+per this document's own versioning policy) — a genuine native CoreML backend
+is now the default execution path for any model with a real, published
+conversion, distinct from ONNX Runtime's CoreML execution provider (which
+remains non-default, unchanged).
 
 Modified principles:
-- VI. Apple Silicon Is a First-Class Target — previously mandated CoreML as
-  the default, non-opt-in execution provider on arm64 macOS. Redefined:
-  Apple Silicon support itself remains mandatory and first-class, but the
-  *default* execution provider is now whichever one is actually measured to
-  perform best for the models this tool ships (currently CPU — CoreML
-  measured zero speedup for the NVIDIA Parakeet family and required a
-  stability workaround for a real ONNX Runtime crash with these models'
-  external-data storage, research.md §15). CoreML remains available via the
-  explicit `--device coreml` flag, unchanged from before.
+- VI. Apple Silicon Is a First-Class Target — the 2.0.0 amendment made CPU
+  the default because ONNX Runtime's CoreML *execution provider* measured
+  zero speedup for the NVIDIA Parakeet family (research.md §15). That
+  measurement was about a general-purpose ONNX Runtime session with some
+  compute delegated to CoreML — not genuine native CoreML inference.
+  004-native-coreml-backend's research found this distinction is real: a
+  true native CoreML backend (Apple's own ahead-of-time memory planning and
+  fusion across the whole compiled graph, on the Neural Engine) delivers
+  substantial, measured memory and speed improvements ONNX Runtime cannot
+  match at any execution-provider setting. Redefined: native CoreML MUST be
+  the default inference path for any model with a real, published
+  conversion; ONNX Runtime's CoreML execution provider stays a separate,
+  non-default, explicit opt-in (`--device coreml`) exactly as before; ONNX
+  Runtime CPU remains the fallback path for any model without a native
+  CoreML conversion.
 
 Added sections: none
 
 Removed sections: none
 
 Templates requiring updates:
-- ✅ specs/001-media-transcription/plan.md — Constitution Check's Principle VI
-  row updated to match (already done alongside this amendment).
+- ⚠ specs/004-native-coreml-backend/plan.md — Constitution Check's Principle
+  VI row must reference this amendment (being authored in the same work that
+  produced this amendment).
 - ✅ .specify/templates/plan-template.md — Constitution Check section derives
   its gates from this file at runtime; no hardcoded principle names to sync.
 - ✅ .specify/templates/spec-template.md — no constitution-specific references.
@@ -90,22 +99,32 @@ download and load path that Principle IV enforces.
 
 Apple Silicon MUST be a fully-supported target requiring no manual
 configuration, extra flags, or separate build steps beyond what any other
-supported target needs. CoreML acceleration MUST remain available as an
-explicit, documented option (`--device coreml`) for anyone who wants to use
-it, but MUST NOT be required by default: `--device auto`'s default execution
-path is whichever provider is actually measured to perform best for the
-models this tool ships, re-verified whenever that changes.
+supported target needs. For any model with a real, published native CoreML
+conversion, that native CoreML backend MUST be the default inference path —
+running the model directly through Apple's CoreML framework, not through
+ONNX Runtime with compute for some nodes delegated to a CoreML execution
+provider. ONNX Runtime's CoreML execution provider remains available as a
+separate, explicit, documented option (`--device coreml`) for anyone who
+wants to use or compare it, unchanged from before. Any model without an
+available native CoreML conversion MUST continue to run correctly via the
+existing ONNX Runtime CPU path as a fallback, so no supported model becomes
+unusable while its conversion doesn't yet exist.
 
 **Rationale**: Apple Silicon is a primary deployment target, not a secondary
-optimization — but "first-class support" means the tool runs its best on
-that hardware, not that a specific execution provider is mandatory
-regardless of whether it helps. Measured directly against this project's
-NVIDIA Parakeet models (research.md §15): CoreML produced no measurable
-speedup over the CPU execution provider, and required a stability workaround
-for a real ONNX Runtime crash with these models' external-data storage.
-Defaulting to it anyway would add real complexity and risk for zero user
-benefit, which itself would degrade the Apple Silicon experience this
-principle exists to protect.
+optimization. A prior amendment (2.0.0) made CPU the default after finding
+ONNX Runtime's CoreML *execution provider* produced no measurable speedup
+for the NVIDIA Parakeet family (research.md §15) — but that measurement was
+about a general-purpose ONNX Runtime session with some compute delegated to
+CoreML, not genuine native CoreML inference. Direct investigation
+(004-native-coreml-backend) found this distinction is real: a true native
+CoreML backend gets Apple's own ahead-of-time memory planning and fusion
+across the whole compiled graph, running on the Neural Engine — benefits
+ONNX Runtime cannot provide at any execution-provider setting, since it's
+still bounded by ORT's own general-purpose session and memory management
+regardless of which provider executes the compute. Continuing to default to
+CPU/ONNX Runtime once a real native conversion exists would mean knowingly
+leaving Apple Silicon's actual advantage on the table for every user on that
+hardware — the opposite of what "first-class target" is meant to protect.
 
 ### VII. Minimal Runtime Dependencies
 
@@ -158,4 +177,4 @@ date fields below MUST be updated.
 these principles before merge. A violation MUST be either fixed or justified
 in writing (e.g., in a plan's Complexity Tracking table) before it can land.
 
-**Version**: 2.0.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-14
+**Version**: 3.0.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-22

@@ -6,8 +6,9 @@ mod progress;
 
 use anyhow::Context;
 use clap::Parser;
-use inference::{Device, ModelKind, Transcript};
-use model::registry::{FileRole, ModelEntry};
+use inference::Transcript;
+use inference::swift_bridge::SwiftAsrBridge;
+use model::registry::ModelEntry;
 use output::OutputFormat;
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -36,13 +37,10 @@ struct Cli {
     #[arg(short, long, default_value = "text", env = "PARA_FORMAT")]
     format: OutputFormat,
 
-    /// Execution provider: auto, coreml, or cpu.
+    /// Force CPU-only inference (no Neural Engine/GPU dispatch) — useful for
+    /// benchmarking or troubleshooting. Default uses the Neural Engine.
     #[arg(long, default_value = "auto", env = "PARA_DEVICE")]
-    device: Device,
-
-    /// Override the model cache directory.
-    #[arg(long, env = "PARA_CACHE_DIR")]
-    cache_dir: Option<PathBuf>,
+    device: DeviceArg,
 
     /// List available models and their cache state, then exit.
     #[arg(long)]
@@ -61,6 +59,25 @@ struct Cli {
     /// "any non-empty value" behavior contracts/cli-interface.md documents.
     #[arg(long)]
     no_progress: bool,
+}
+
+/// `--device`'s two meaningful values now that inference runs entirely
+/// through the native CoreML backend (004-native-coreml-backend) — `coreml`
+/// is kept as an accepted synonym for `auto` so existing scripts using it
+/// don't break, since there is no separate ONNX Runtime CoreML execution
+/// provider left to distinguish it from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+enum DeviceArg {
+    #[default]
+    Auto,
+    Coreml,
+    Cpu,
+}
+
+impl DeviceArg {
+    fn is_cpu_only(self) -> bool {
+        matches!(self, DeviceArg::Cpu)
+    }
 }
 
 fn main() {
@@ -143,97 +160,36 @@ fn run() -> anyhow::Result<()> {
     let wav_file = tempfile::NamedTempFile::new()
         .context("failed to create temp file for transcoded audio")?;
     audio::transcode_to_wav(&input_path, wav_file.path())?;
-    let samples = audio::read_wav_samples(wav_file.path())?;
 
     eprintln!("using model: {}", entry.id);
 
-    let cache_dir = cli.cache_dir.as_deref();
-    let model_dir = if cli.refresh_model {
-        model::manager::refresh(entry, cache_dir)
-    } else {
-        model::manager::ensure_cached(entry, cache_dir)
-    }
-    .with_context(|| format!("failed to prepare model {}", entry.id))?;
+    let mut bridge = SwiftAsrBridge::new().context("failed to initialize native CoreML backend")?;
 
-    let vocab_path = model_dir.join(find_file(entry, FileRole::Vocab)?.name);
-    let vocab = inference::decoder::Vocab::load(&vocab_path)?;
-    anyhow::ensure!(
-        !vocab.is_empty(),
-        "vocab file is empty: {}",
-        vocab_path.display()
-    );
-
-    if entry.timing_granularity == model::registry::TimingGranularity::WholeFile
-        && matches!(cli.format, OutputFormat::Json | OutputFormat::Srt)
-    {
-        eprintln!(
-            "note: {} produces whole-file timing only, not per-phrase timestamps",
-            entry.id
-        );
+    if cli.refresh_model {
+        bridge
+            .refresh_model(entry.version)
+            .with_context(|| format!("failed to refresh model {}", entry.id))?;
     }
 
     progress.start_model_loading();
+    bridge
+        .load_model(entry.version, cli.device.is_cpu_only())
+        .with_context(|| format!("failed to load model {}", entry.id))?;
+    progress.finish_model_loading();
 
-    let mut preprocessor = inference::mel::Preprocessor::load(entry.kind, cli.device, cache_dir)
-        .context("failed to load mel-spectrogram preprocessor")?;
+    progress.start_transcription();
+    let result = bridge
+        .transcribe_file(wav_file.path())
+        .context("transcription failed")?;
+    progress.finish_transcription();
 
-    let encoder_file = find_file(entry, FileRole::Encoder)?;
-    let mut encoder_session = inference::engine::build_session_from_file(
-        &model_dir.join(encoder_file.name),
-        cli.device,
-        cache_dir,
-    )
-    .context("failed to load encoder model")?;
-
-    let transcript = match entry.kind {
-        ModelKind::Tdt => {
-            let decoder_joint_file = find_file(entry, FileRole::DecoderJoint)?;
-            let mut decoder_joint_session = inference::engine::build_session_from_file(
-                &model_dir.join(decoder_joint_file.name),
-                cli.device,
-                cache_dir,
-            )
-            .context("failed to load decoder-joint model")?;
-            progress.finish_model_loading();
-
-            progress.start_transcription(probe.duration_secs);
-            let chunks = inference::engine::encode_chunked(
-                &samples,
-                &mut preprocessor,
-                &mut encoder_session,
-                &mut progress,
-            )?;
-            let transcript = inference::decoder::decode_tdt(
-                &chunks,
-                &mut decoder_joint_session,
-                &vocab,
-                entry.id,
-                probe.duration_secs,
-                &mut progress,
-            )?;
-            progress.finish_transcription();
-            transcript
-        }
-        ModelKind::Ctc => {
-            progress.finish_model_loading();
-
-            progress.start_transcription(probe.duration_secs);
-            let chunks = inference::engine::encode_chunked_ctc(
-                &samples,
-                &mut preprocessor,
-                &mut encoder_session,
-                &mut progress,
-            )?;
-            let transcript = inference::decoder::decode_ctc(
-                &chunks,
-                &vocab,
-                entry.id,
-                probe.duration_secs,
-                &mut progress,
-            )?;
-            progress.finish_transcription();
-            transcript
-        }
+    let segments = inference::segments::build_segments(&result.words);
+    let text = inference::segments::join_as_paragraphs(&segments);
+    let transcript = Transcript {
+        text,
+        segments,
+        model: entry.id.to_string(),
+        duration_secs: probe.duration_secs,
     };
 
     write_output(&cli, &transcript, output_sink.as_mut())
@@ -250,17 +206,6 @@ fn resolve_model(requested: Option<&str>) -> anyhow::Result<&'static ModelEntry>
             anyhow::anyhow!("unknown model {id:?} — valid options: {}", valid.join(", "))
         }),
     }
-}
-
-fn find_file(
-    entry: &'static ModelEntry,
-    role: FileRole,
-) -> anyhow::Result<&'static model::registry::ModelFile> {
-    entry
-        .files
-        .iter()
-        .find(|f| f.role == role)
-        .ok_or_else(|| anyhow::anyhow!("model {} has no file with role {role:?}", entry.id))
 }
 
 /// Writes `transcript` to stdout or `-o <file>` (FR-011). A file that can't

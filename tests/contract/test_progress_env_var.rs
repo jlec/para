@@ -14,14 +14,7 @@ fn env_var_with_value_one_suppresses_progress() {
     write_silence_wav(&input, 1.0);
 
     let output = Command::new(para_bin())
-        .args([
-            "-i",
-            input.to_str().unwrap(),
-            "--device",
-            "cpu",
-            "--model",
-            "parakeet-ctc-0.6b",
-        ])
+        .args(["-i", input.to_str().unwrap(), "--device", "cpu"])
         .env("PARA_NO_PROGRESS", "1")
         .output()
         .unwrap();

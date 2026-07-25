@@ -1,6 +1,5 @@
-pub mod decoder;
-pub mod engine;
-pub mod mel;
+pub mod segments;
+pub mod swift_bridge;
 
 /// The result of transcribing one input file.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -17,21 +16,4 @@ pub struct Segment {
     pub start: f64,
     pub end: f64,
     pub text: String,
-}
-
-/// Which decode path a model uses. TDT models emit segment-level timestamps;
-/// CTC models emit a single segment spanning the whole input (data-model.md).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModelKind {
-    Tdt,
-    Ctc,
-}
-
-/// Execution provider selection for the ONNX Runtime session (contracts/cli-interface.md `--device`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
-pub enum Device {
-    #[default]
-    Auto,
-    Coreml,
-    Cpu,
 }

@@ -14,8 +14,9 @@ fn fmt_srt_time(secs: f64) -> String {
 }
 
 /// Writes `transcript` as a sequence of numbered, comma-timestamped SRT
-/// blocks (FR-006; contracts/output-srt.md). A whole-file single segment
-/// (CTC-tier models, data-model.md) produces exactly one block.
+/// blocks (FR-006; contracts/output-srt.md). A transcript with a single
+/// segment (e.g. a short clip with no internal pauses) produces exactly one
+/// block.
 pub fn write(transcript: &Transcript, writer: &mut dyn Write) -> anyhow::Result<()> {
     for (i, segment) in transcript.segments.iter().enumerate() {
         writeln!(writer, "{}", i + 1)?;
@@ -76,7 +77,7 @@ mod tests {
     }
 
     #[test]
-    fn single_segment_ctc_fallback_produces_one_block() {
+    fn single_segment_transcript_produces_one_block() {
         let transcript = Transcript {
             text: "whole file text".to_string(),
             segments: vec![Segment {
@@ -84,7 +85,7 @@ mod tests {
                 end: 5.0,
                 text: "whole file text".to_string(),
             }],
-            model: "parakeet-ctc-0.6b".to_string(),
+            model: "parakeet-tdt-0.6b-v3".to_string(),
             duration_secs: 5.0,
         };
         let mut out = Vec::new();

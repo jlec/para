@@ -16,8 +16,6 @@ fn json_output_has_required_fields_and_valid_segments() {
             input.to_str().unwrap(),
             "--device",
             "cpu",
-            "--model",
-            "parakeet-ctc-0.6b",
             "-f",
             "json",
         ])

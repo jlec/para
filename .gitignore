@@ -1124,3 +1124,5 @@ target
 /assets/preprocessors/nemo128.onnx
 /assets/preprocessors/nemo80.onnx
 /test.wav
+/swift/.build/
+/swift/.swiftpm/

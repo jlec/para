@@ -1,6 +1,12 @@
 //! Stderr-only progress reporting across a run's three phases — reading
 //! stdin, loading the model, and transcribing (spec 002-transcription-progress).
 //!
+//! The native CoreML backend (004-native-coreml-backend) transcribes a file
+//! in one call with no per-chunk callback, so — unlike the old ONNX Runtime
+//! pipeline — there is no known total to show a percentage/ETA against;
+//! every phase here is an indeterminate spinner (or a single plain-text
+//! line when non-interactive), not a progress bar.
+//!
 //! indicatif's own default behavior on a non-interactive stderr (redirected,
 //! or `TERM` unset/`dumb`) is to go fully silent, not degrade to plain text
 //! (research.md §1) — so this module makes its own `is_interactive` check
@@ -18,8 +24,8 @@ fn is_interactive() -> bool {
 }
 
 /// One progress-reporting handle per run, constructed once in `main::run()`
-/// and threaded through to `audio::stage_stdin`, model-session construction,
-/// and `inference::engine`'s chunked encode/decode passes.
+/// and threaded through to `audio::stage_stdin` and the model-load/
+/// transcribe phases.
 pub struct TranscriptionProgress {
     suppressed: bool,
     interactive: bool,
@@ -103,73 +109,20 @@ impl TranscriptionProgress {
         }
     }
 
-    // ---- Phase: transcribing (FR-002/005/006) ----
+    // ---- Phase: transcribing ----
 
-    /// `total_duration_secs` is the input's already-known audio duration
-    /// (`InputMedia.duration_secs`, probed identically for both input
-    /// methods before this phase begins — data-model.md). Represented as
-    /// audio-milliseconds internally (research.md §5) since indicatif's
-    /// position/length are `u64`.
-    pub fn start_transcription(&mut self, total_duration_secs: f64) {
+    /// The native CoreML backend has no per-chunk callback to drive an
+    /// incremental bar with, so this is always an indeterminate spinner
+    /// (or a single plain-text line non-interactively) regardless of input
+    /// length.
+    pub fn start_transcription(&mut self) {
         if self.suppressed {
             return;
         }
         if self.interactive {
-            let total_ms = (total_duration_secs * 1000.0).round() as u64;
-            let pb = ProgressBar::new(total_ms);
-            pb.set_style(
-                ProgressStyle::with_template(
-                    "transcribing [{bar:40.cyan/blue}] {percent}% (eta: {eta})",
-                )
-                .unwrap_or_else(|_| ProgressStyle::default_bar()),
-            );
-            self.bar = Some(pb);
+            self.bar = self.spinner("transcribing...");
         } else {
             eprintln!("transcribing...");
-        }
-    }
-
-    /// Advances the bar by half of one chunk's audio duration, once that
-    /// chunk's *encoding* pass completes. Split 50/50 with
-    /// [`Self::advance_decoded`] rather than crediting a chunk's full
-    /// duration on encode alone: encode and decode are two separate passes
-    /// over every chunk (`encode_chunked` builds all chunks' encoder output
-    /// first, then `decode_tdt`/`decode_ctc` decode them), and TDT's
-    /// autoregressive decode is frequently the slower half — crediting the
-    /// full chunk on encode would make the bar read "done" long before the
-    /// process actually finishes. No output in non-interactive mode: the
-    /// plain-text fallback only has one milestone worth reporting per
-    /// chunk, emitted once that chunk is *fully* transcribed (encode +
-    /// decode), not merely encoded — see [`Self::advance_decoded`].
-    pub fn advance_encoded(&mut self, chunk_duration_secs: f64) {
-        if self.suppressed {
-            return;
-        }
-        if let Some(pb) = &self.bar {
-            pb.inc((chunk_duration_secs * 500.0).round() as u64);
-        }
-    }
-
-    /// Advances the bar by the remaining half of one chunk's audio
-    /// duration, once that chunk's *decoding* pass completes. In
-    /// non-interactive mode, this is where the plain per-chunk milestone is
-    /// emitted (extending spec 001's `"transcribing chunk N of M"` line,
-    /// now timed to when the chunk is actually done rather than when it
-    /// starts, and emitted uniformly rather than only when chunking was
-    /// needed — FR-011).
-    pub fn advance_decoded(
-        &mut self,
-        chunk_index: usize,
-        total_chunks: usize,
-        chunk_duration_secs: f64,
-    ) {
-        if self.suppressed {
-            return;
-        }
-        if let Some(pb) = &self.bar {
-            pb.inc((chunk_duration_secs * 500.0).round() as u64);
-        } else if !self.interactive {
-            eprintln!("transcribing chunk {chunk_index} of {total_chunks}");
         }
     }
 
@@ -215,25 +168,12 @@ mod tests {
         assert!(p.bar.is_none());
         p.start_model_loading();
         assert!(p.bar.is_none());
-        p.start_transcription(10.0);
+        p.start_transcription();
         assert!(p.bar.is_none());
     }
 
     #[test]
-    fn interactive_transcription_reaches_full_length_after_encode_and_decode_halves() {
-        let mut p = interactive();
-        p.start_transcription(10.0);
-        let bar = p.bar.as_ref().unwrap();
-        assert_eq!(bar.length(), Some(10_000));
-        assert_eq!(bar.position(), 0);
-        p.advance_encoded(10.0);
-        assert_eq!(p.bar.as_ref().unwrap().position(), 5_000);
-        p.advance_decoded(1, 1, 10.0);
-        assert_eq!(p.bar.as_ref().unwrap().position(), 10_000);
-    }
-
-    #[test]
-    fn interactive_mode_builds_a_real_bar_for_model_loading_and_stdin() {
+    fn interactive_mode_builds_a_real_bar_for_every_phase() {
         let mut p = interactive();
         p.start_model_loading();
         assert!(p.bar.is_some());
@@ -244,6 +184,11 @@ mod tests {
         assert!(p.bar.is_some());
         p.finish_reading_stdin();
         assert!(p.bar.is_none());
+
+        p.start_transcription();
+        assert!(p.bar.is_some());
+        p.finish_transcription();
+        assert!(p.bar.is_none());
     }
 
     #[test]
@@ -253,10 +198,7 @@ mod tests {
         assert!(p.bar.is_none());
         p.start_model_loading();
         assert!(p.bar.is_none());
-        p.start_transcription(10.0);
-        assert!(p.bar.is_none());
-        p.advance_encoded(10.0);
-        p.advance_decoded(1, 1, 10.0);
+        p.start_transcription();
         assert!(p.bar.is_none());
     }
 }

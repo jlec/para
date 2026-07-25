@@ -15,8 +15,6 @@ fn no_progress_flag_suppresses_all_progress_output() {
             input.to_str().unwrap(),
             "--device",
             "cpu",
-            "--model",
-            "parakeet-ctc-0.6b",
             "--no-progress",
         ])
         .output()

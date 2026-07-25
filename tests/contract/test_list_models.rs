@@ -15,11 +15,10 @@ fn lists_every_model_with_exactly_one_default() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("parakeet-tdt-0.6b-v3"), "stdout: {stdout}");
     assert!(stdout.contains("parakeet-tdt-0.6b-v2"), "stdout: {stdout}");
-    assert!(stdout.contains("parakeet-ctc-0.6b"), "stdout: {stdout}");
     assert_eq!(stdout.matches("(default)").count(), 1, "stdout: {stdout}");
     assert_eq!(
         stdout.matches("Cache state:").count(),
-        3,
+        2,
         "stdout: {stdout}"
     );
 }
