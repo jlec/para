@@ -6,18 +6,32 @@ speech models running natively on the Apple Neural Engine via
 binary, no daemon, no cloud API — point it at a file, get a transcript, in seconds, using a few
 hundred MB of memory.
 
-## Prerequisites
+## Install
+
+`para` is macOS on Apple Silicon only. `jlec/para` is a private repo, so installs authenticate via
+a GitHub token rather than being fully public:
+
+```bash
+export HOMEBREW_GITHUB_API_TOKEN=<a PAT with read access to jlec/para>  # add to your shell profile
+brew tap jlec/tap
+brew install para
+```
+
+This installs a prebuilt binary (built by `.github/workflows/cd.yaml` on every tagged release) and
+pulls in `ffmpeg` automatically as a formula dependency — no other setup needed.
+
+## Build from source
+
+Prerequisites:
 
 - macOS on Apple Silicon (this tool is not portable to other platforms)
-- `ffmpeg` on `PATH` (the only dependency you install by hand — `brew install ffmpeg`)
+- `ffmpeg` on `PATH` (`brew install ffmpeg`)
 - Xcode Command Line Tools (`xcode-select --install`) — `para`'s inference backend links
   [FluidAudio](https://github.com/FluidInference/FluidAudio) directly via a small Swift package,
   built at compile time
-- Rust 2024 edition (MSRV 1.85+) to build from source
+- Rust 2024 edition (MSRV 1.85+)
 - Network access for the first build (fetches the FluidAudio Swift package) and the first use of
   any given model (downloads it to a local cache) — nothing after that
-
-## Build
 
 ```bash
 task rust:build      # debug build
