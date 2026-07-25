@@ -52,30 +52,30 @@ demands real, not assumed, verification either way).
 - FR-004: output (text, timing, format) must be byte-for-byte unaffected by this change — this is a
   resource-usage fix only.
 - Short/medium recordings (under the existing 300s single-pass threshold) must see no regression —
-  research.md's Phase 0 found that naively lowering the chunk size for *all* inputs slightly hurts
+  research.md's Phase 0 found that naively lowering the chunk size for _all_ inputs slightly hurts
   short files (extra per-call overhead with no growth problem to offset). The two-threshold design
   exists specifically to avoid this.
 - The exact smaller chunk-size value needs real tuning, not just adopting the 15s value tested in
   Phase 0 research uncritically — see Phase 0 below.
 
 **Scale/Scope**: No change to spec 001's "no artificial duration cap" assumption; this feature
-makes long recordings *more* practical to run (lower peak memory), not less.
+makes long recordings _more_ practical to run (lower peak memory), not less.
 
 ## Constitution Check
 
 _GATE: Must pass before Phase 0 research. Re-check after Phase 1 design._
 
-| Principle | Check | Status |
-|---|---|---|
-| I. Single Binary, No Daemon | No change — still one invocation, no persistent state. | PASS |
-| II. Offline After Setup | No network I/O introduced. | PASS |
-| III. Stdout Is Sacred | Unaffected — this change is entirely in the encode/decode pipeline, nowhere near output writing. | PASS |
-| IV. Fail Loud, Fail Fast | Unaffected — no new failure modes; chunk-count changes don't change error handling. | PASS |
-| V. No Fabricated Data | Every claim in this plan (the growth pattern, the four ruled-out levers, the chunk-size fix, FluidAudio's actual model signature) was verified against a real build or a real downloaded model file, not assumed — research.md documents each measurement. FR-005 requires the same discipline for the final implementation. | PASS |
-| VI. Apple Silicon First-Class | Unaffected by this specific fix (platform-independent). The deferred native-CoreML discussion (spec.md Clarifications) is relevant to this principle's future evolution but is explicitly out of this feature's scope. | PASS / N/A |
-| VII. Minimal Runtime Dependencies | No new dependency. | PASS |
-| VIII. Composability Over Features | No new flags, no new surface — an internal tuning fix. | PASS |
-| Engineering Standards | `chunk_ranges`'s existing unit tests are extended to cover the new two-threshold logic; no new fallible operations are introduced (no new `Result`-returning code paths). | PASS |
+| Principle                         | Check                                                                                                                                                                                                                                                                                                                        | Status     |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| I. Single Binary, No Daemon       | No change — still one invocation, no persistent state.                                                                                                                                                                                                                                                                       | PASS       |
+| II. Offline After Setup           | No network I/O introduced.                                                                                                                                                                                                                                                                                                   | PASS       |
+| III. Stdout Is Sacred             | Unaffected — this change is entirely in the encode/decode pipeline, nowhere near output writing.                                                                                                                                                                                                                             | PASS       |
+| IV. Fail Loud, Fail Fast          | Unaffected — no new failure modes; chunk-count changes don't change error handling.                                                                                                                                                                                                                                          | PASS       |
+| V. No Fabricated Data             | Every claim in this plan (the growth pattern, the four ruled-out levers, the chunk-size fix, FluidAudio's actual model signature) was verified against a real build or a real downloaded model file, not assumed — research.md documents each measurement. FR-005 requires the same discipline for the final implementation. | PASS       |
+| VI. Apple Silicon First-Class     | Unaffected by this specific fix (platform-independent). The deferred native-CoreML discussion (spec.md Clarifications) is relevant to this principle's future evolution but is explicitly out of this feature's scope.                                                                                                       | PASS / N/A |
+| VII. Minimal Runtime Dependencies | No new dependency.                                                                                                                                                                                                                                                                                                           | PASS       |
+| VIII. Composability Over Features | No new flags, no new surface — an internal tuning fix.                                                                                                                                                                                                                                                                       | PASS       |
+| Engineering Standards             | `chunk_ranges`'s existing unit tests are extended to cover the new two-threshold logic; no new fallible operations are introduced (no new `Result`-returning code paths).                                                                                                                                                    | PASS       |
 
 No violations requiring justification — Complexity Tracking is intentionally empty.
 

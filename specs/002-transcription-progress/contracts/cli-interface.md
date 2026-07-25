@@ -6,14 +6,14 @@ below — everything else (existing flags, output formats, the JSON/SRT schemas)
 
 ## New flag
 
-| Flag | Required | Default | Behavior |
-|---|---|---|---|
-| `--no-progress` | No | off (progress shown) | Suppresses all progress output on stderr (FR-008). Errors are still reported regardless (FR-009). Has no effect on stdout, which never carried progress output in the first place. |
+| Flag            | Required | Default              | Behavior                                                                                                                                                                           |
+| --------------- | -------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--no-progress` | No       | off (progress shown) | Suppresses all progress output on stderr (FR-008). Errors are still reported regardless (FR-009). Has no effect on stdout, which never carried progress output in the first place. |
 
 ## New environment variable
 
-| Variable | Overrides |
-|---|---|
+| Variable           | Overrides                                                                                                                              |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `PARA_NO_PROGRESS` | `--no-progress` — any non-empty value is equivalent to passing the flag, matching this project's existing `PARA_*` override convention |
 
 ## Revised stream contract (extends spec 001's)
@@ -37,13 +37,13 @@ below — everything else (existing flags, output formats, the JSON/SRT schemas)
 
 ## Observable behavior by environment (non-exhaustive, illustrative)
 
-| Environment | What appears on stderr |
-|---|---|
-| Interactive terminal, `-i` file input, long recording | Model-load spinner, then an animated determinate bar (percent + ETA) advancing per chunk |
-| Interactive terminal, piped stdin, long recording | An indeterminate byte-read spinner, then the same model-load spinner and determinate bar as above |
-| stderr redirected to a file (any input method) | Plain newline-terminated milestone lines only — no animation, no ANSI/color codes |
-| `TERM` unset or `TERM=dumb`, even if stderr is a real terminal device | Same plain-milestone behavior as a redirected file (research.md §2) |
-| `--no-progress` / `PARA_NO_PROGRESS` set | No progress output of any kind; errors, if any, still appear |
+| Environment                                                           | What appears on stderr                                                                            |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Interactive terminal, `-i` file input, long recording                 | Model-load spinner, then an animated determinate bar (percent + ETA) advancing per chunk          |
+| Interactive terminal, piped stdin, long recording                     | An indeterminate byte-read spinner, then the same model-load spinner and determinate bar as above |
+| stderr redirected to a file (any input method)                        | Plain newline-terminated milestone lines only — no animation, no ANSI/color codes                 |
+| `TERM` unset or `TERM=dumb`, even if stderr is a real terminal device | Same plain-milestone behavior as a redirected file (research.md §2)                               |
+| `--no-progress` / `PARA_NO_PROGRESS` set                              | No progress output of any kind; errors, if any, still appear                                      |
 
 ## Test mapping
 

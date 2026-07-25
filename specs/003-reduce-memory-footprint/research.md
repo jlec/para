@@ -10,12 +10,12 @@ then reverted; none of these experimental toggles remain in the codebase.
 Measured on `parakeet-ctc-0.6b` against pure-silence WAV files at controlled durations (isolating
 chunk count from real-speech confounds), `--no-progress`, `--device cpu`:
 
-| Duration | Chunks | Peak RSS |
-|---|---|---|
-| 250s | 1 | 2.90 GB |
-| 350s | 2 | 3.26 GB |
-| 650s | 3 | 5.19 GB (also independently re-measured at 4.15 GB in a later run — see run-to-run variance note below) |
-| 950s | 4 | 5.36 GB |
+| Duration | Chunks | Peak RSS                                                                                                |
+| -------- | ------ | ------------------------------------------------------------------------------------------------------- |
+| 250s     | 1      | 2.90 GB                                                                                                 |
+| 350s     | 2      | 3.26 GB                                                                                                 |
+| 650s     | 3      | 5.19 GB (also independently re-measured at 4.15 GB in a later run — see run-to-run variance note below) |
+| 950s     | 4      | 5.36 GB                                                                                                 |
 
 Also reproduced directly on the user's own reported file (`07-01_Meeting_...mp3`, ~25 minutes,
 default `parakeet-tdt-0.6b-v3` model, default settings): **5.79GB** peak, exit code 0, real
@@ -52,7 +52,7 @@ bulk of the footprint is not "the model weights sitting in RAM."
 ### 4. Execution provider and threading
 
 - `--device coreml` (ORT's CoreML execution provider, already supported as an explicit opt-in) on
-  the same short clip: 2.31GB, slightly *worse* than CPU's 2.19-2.39GB range. This still goes
+  the same short clip: 2.31GB, slightly _worse_ than CPU's 2.19-2.39GB range. This still goes
   through ONNX Runtime's general session/graph/memory infrastructure — CoreML only takes over
   compute for statically-shaped subgraph portions (research.md §13 of `001-media-transcription`),
   so it doesn't get the memory benefits of a purpose-built native pipeline.
@@ -61,7 +61,7 @@ bulk of the footprint is not "the model weights sitting in RAM."
   buffers.
 - Sequential vs. parallel graph execution (`SessionBuilder::with_parallel_execution(false)`): no
   meaningful difference (2.42GB vs. 2.39GB baseline).
-- The best *combination* found across all four experiments (arena disabled + memory pattern
+- The best _combination_ found across all four experiments (arena disabled + memory pattern
   disabled together, tested on the 650s case) gave 3.67GB vs. a 4.15GB baseline — a real ~12%
   reduction, the single largest effect measured, though still far short of resolving the underlying
   problem.
@@ -69,7 +69,7 @@ bulk of the footprint is not "the model weights sitting in RAM."
 ## What this rules in
 
 None of the four levers tested — separately or combined — comes close to explaining or fixing a
-multi-gigabyte footprint, or approaching VoiceInk's ~200MB *incremental* figure. Combined with
+multi-gigabyte footprint, or approaching VoiceInk's ~200MB _incremental_ figure. Combined with
 finding 3 (weight precision barely matters), this points away from "one wrong config flag" and
 toward something more structural: **ONNX Runtime's general-purpose CPU session for a ~600M-parameter
 Conformer encoder appears to have a large, largely fixed memory floor that isn't controllable
@@ -80,7 +80,7 @@ weight storage, allocator strategy, or thread count.
 This is architecturally consistent with why VoiceInk looks so different: it doesn't run ONNX
 Runtime at all. It runs Parakeet through **native CoreML** (`.mlmodelc`, via FluidAudio — confirmed
 from VoiceInk's own source, researched during `002-transcription-progress`'s planning), where
-Apple's own compiler performs ahead-of-time memory planning and fusion across the *entire* compiled
+Apple's own compiler performs ahead-of-time memory planning and fusion across the _entire_ compiled
 graph. `ort`'s CoreML execution provider (tested above) does not get this benefit — it's still an
 ONNX Runtime session underneath, just with compute for some nodes delegated to CoreML.
 
@@ -90,7 +90,7 @@ Matching VoiceInk's footprint would require **bypassing ONNX Runtime entirely** 
 inference and calling Apple's CoreML framework directly (`.mlpackage`/`.mlmodelc`, real conversion
 via `coremltools`, a new inference backend) — the same trade this project explicitly declined
 before, for different reasons (research.md §13-15 of `001-media-transcription`: CoreML measured zero
-*speed* benefit through ORT's wrapper, so it was dropped from the default path). This is a
+_speed_ benefit through ORT's wrapper, so it was dropped from the default path). This is a
 substantially larger undertaking than a memory-footprint feature should absorb on its own:
 
 - A new, CoreML-only code path — Linux and Intel Mac (darwin/amd64) would need to keep the existing
@@ -114,10 +114,10 @@ This was tested directly, entirely within the existing ONNX Runtime architecture
 lowering `CHUNK_SECONDS` from 300 to 15 (`src/inference/engine.rs`) and re-running the same
 measurements used throughout this research:
 
-| Case | 300s chunks (current) | 15s chunks |
-|---|---|---|
-| 650s file, CTC (the case with the clearest growth signal above) | 4.15-5.19 GB | **2.38 GB** (~50% lower; memory plateaued and stayed flat from ~30s into the run onward, rather than climbing throughout) |
-| 62s file, TDT default model (previously single-pass, under the old 300s threshold) | ~2.2 GB | 2.52 GB (slightly *worse* — forcing chunking on a file too short to need it adds per-call overhead with no growth problem to offset) |
+| Case                                                                               | 300s chunks (current) | 15s chunks                                                                                                                           |
+| ---------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 650s file, CTC (the case with the clearest growth signal above)                    | 4.15-5.19 GB          | **2.38 GB** (~50% lower; memory plateaued and stayed flat from ~30s into the run onward, rather than climbing throughout)            |
+| 62s file, TDT default model (previously single-pass, under the old 300s threshold) | ~2.2 GB               | 2.52 GB (slightly _worse_ — forcing chunking on a file too short to need it adds per-call overhead with no growth problem to offset) |
 
 **This is the real fix, and it requires no architecture change.** It directly explains the original
 growth-vs-chunk-count data (§ above): more/larger chunks meant more accumulated per-call working set
@@ -155,7 +155,7 @@ whenever speech straddled a cut point, the encoder had no acoustic evidence ther
 tended to emit blank (silently drop content) rather than guess — a problem that gets worse, not better,
 as chunks get smaller and boundaries more frequent.
 
-**Fix**: extend each chunk's encoder input by a fixed overlap on *both* sides (`CHUNK_OVERLAP_SECONDS`)
+**Fix**: extend each chunk's encoder input by a fixed overlap on _both_ sides (`CHUNK_OVERLAP_SECONDS`)
 before running the encoder, then trim exactly the overlap's worth of frames off both ends of the
 encoder output before decoding (`trim_frames` in `engine.rs`) — so the encoder gets real context at
 every boundary, but no audio is ever decoded twice. A left-context-only version was tried first and
@@ -169,13 +169,13 @@ into a frame-trim count. CTC does not use this mechanism — it doesn't need it.
 `CHUNK_OVERLAP_SECONDS = 5.0`. Real-measurement results on the original reported file and a
 same-source long recording:
 
-| Metric | Pre-fix (300s) | Post-fix (30s + 5s overlap) |
-|---|---|---|
-| Peak memory, original reported file (mp3) | 5.79GB (baseline) | 2.570GB (**50.0% reduction**) |
-| Peak memory, short clip (2 min) vs. long recording (~25.7 min) | n/a | 2.48GB vs. 2.75GB — close, flat |
-| Transcript content, long recording | (reference) | Cosmetic differences only (max 8 consecutive words), no dropped clauses |
-| Wall-clock time, long recording | 4m38s | 3m28s — **faster**, not slower |
-| Peak memory, 1-hour synthetic recording | (untested at this length pre-fix) | 2.82GB — still flat |
+| Metric                                                         | Pre-fix (300s)                    | Post-fix (30s + 5s overlap)                                             |
+| -------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------------------------- |
+| Peak memory, original reported file (mp3)                      | 5.79GB (baseline)                 | 2.570GB (**50.0% reduction**)                                           |
+| Peak memory, short clip (2 min) vs. long recording (~25.7 min) | n/a                               | 2.48GB vs. 2.75GB — close, flat                                         |
+| Transcript content, long recording                             | (reference)                       | Cosmetic differences only (max 8 consecutive words), no dropped clauses |
+| Wall-clock time, long recording                                | 4m38s                             | 3m28s — **faster**, not slower                                          |
+| Peak memory, 1-hour synthetic recording                        | (untested at this length pre-fix) | 2.82GB — still flat                                                     |
 
 The speed result was unexpected in the opposite direction from the risk flagged in plan.md
 (more, smaller `session.run()` calls could have added overhead) — smaller per-call working sets

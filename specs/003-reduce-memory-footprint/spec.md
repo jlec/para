@@ -20,7 +20,7 @@ reached **5.79GB** over the course of a successful, correctly-completed transcri
 tool whose entire model weights are ~2.4GB on disk (a ratio of roughly 2.4x). Memory climbed
 steadily during encoding, plateaued for a stretch, then rose again near the end of the run. This
 spec treats that growth pattern itself, not just a single absolute number, as the problem: the
-concern is that memory scales with *how long the recording is*, not that a one-time fixed cost is
+concern is that memory scales with _how long the recording is_, not that a one-time fixed cost is
 too big.
 
 ## Clarifications
@@ -30,7 +30,7 @@ too big.
 - Q: What specific ceiling (or model-size multiple) should this tool commit to hitting? → A: Match
   VoiceInk's observed memory footprint on the same file (~200MB of growth during transcription).
   **Recorded as-is, with an important caveat applied below**: VoiceInk's number reflects a
-  persistently-running, pre-warmed process measuring only the *incremental* growth during
+  persistently-running, pre-warmed process measuring only the _incremental_ growth during
   transcription, not a cold start; it also runs Parakeet via native CoreML, not ONNX Runtime.
   `para` is constitutionally required to be a single-invocation, no-daemon tool (Constitution
   Principle I) — it cannot pre-warm across runs the way VoiceInk does, so an exact "~200MB total"
@@ -145,7 +145,7 @@ modest across models rather than wildly different.
 - **SC-002**: Peak memory for the default model on a long recording is reduced by at least 40% from
   the measured ~5.79GB baseline (plan.md's research found a real, verified ~50% reduction on a
   comparable long recording via bounding the per-call processing window, with no architecture
-  change and no loss of output correctness). Full parity with VoiceInk's ~200MB *incremental*
+  change and no loss of output correctness). Full parity with VoiceInk's ~200MB _incremental_
   figure is not achievable within this feature's scope — that would require replacing this tool's
   ONNX Runtime-based inference with a native CoreML backend, a substantially larger,
   Apple-Silicon-only undertaking explicitly deferred to a future feature (see Clarifications).

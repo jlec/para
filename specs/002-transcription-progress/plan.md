@@ -56,11 +56,11 @@ performance figures (Constitution Principle V).
 
 - stderr-only; stdout must remain byte-for-byte the transcript regardless of progress-reporting
   behavior (Constitution III; FR-010).
-- A run must show *some* visible activity indicator within 3 seconds of starting, for every input
+- A run must show _some_ visible activity indicator within 3 seconds of starting, for every input
   length (spec.md SC-005).
 - Non-interactive stderr (redirected, or `TERM` unset/`dumb`) must degrade to plain, newline-terminated
   text — never animation or color codes, and never silence (FR-007; this is the one place this
-  feature deliberately does *not* use indicatif's own default behavior, research.md §1).
+  feature deliberately does _not_ use indicatif's own default behavior, research.md §1).
 - A failure to display progress must never change the run's exit code or fail the transcription
   itself (FR-012) — distinct from Constitution IV's "Fail Loud" principle, which governs
   correctness-relevant failures (checksum mismatch, missing ffmpeg, etc.); progress display is a
@@ -74,17 +74,17 @@ feature only affects observability of an existing pipeline, not its capacity.
 
 _GATE: Must pass before Phase 0 research. Re-check after Phase 1 design._
 
-| Principle | Check | Status |
-|---|---|---|
-| I. Single Binary, No Daemon | No new process, thread lifecycle, or persistent state across invocations — progress state lives entirely within one `run()` call. | PASS |
-| II. Offline After Setup | No network I/O introduced. | PASS |
-| III. Stdout Is Sacred | All progress output (animated or plain-fallback) goes exclusively through stderr — either an indicatif `ProgressBar` explicitly targeting stderr, or direct `eprintln!`. Enforced by contract tests asserting stdout is byte-for-byte the transcript under every progress-reporting mode (interactive, non-interactive, suppressed). | PASS |
-| IV. Fail Loud, Fail Fast | Unaffected for all existing correctness-relevant failure paths. Progress-display failures specifically (e.g., unwritable stderr) are deliberately swallowed (FR-012) — justified above under Constraints as a different category (best-effort UX, not correctness), matching existing precedent (CoreML notice, download bar). | PASS — see Constraints note |
-| V. No Fabricated Data | Every indicatif/console behavioral claim in this plan (default hiding behavior, `is_dumb()`'s exact semantics, `eta()`'s computation) was verified directly against the real vendored crate source, not assumed from training-data familiarity (research.md). | PASS |
-| VI. Apple Silicon First-Class | No execution-provider or platform-specific behavior introduced. | PASS / N/A |
-| VII. Minimal Runtime Dependencies | `console` promoted from transitive to direct at its already-pinned version — no new dependency-tree entries, no new crate to trust. | PASS |
-| VIII. Composability Over Features | `--no-progress` directly serves pipeline/automation use, following the existing `--list-models`/`--refresh-model` flag pattern; no server/GUI/plugin surface added. | PASS |
-| Engineering Standards | New fallible operations (writing progress output) must not panic and must have their failure-tolerance behavior tested; contract tests extend the existing suite rather than introducing new test infrastructure. | PASS |
+| Principle                         | Check                                                                                                                                                                                                                                                                                                                                | Status                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------- |
+| I. Single Binary, No Daemon       | No new process, thread lifecycle, or persistent state across invocations — progress state lives entirely within one `run()` call.                                                                                                                                                                                                    | PASS                        |
+| II. Offline After Setup           | No network I/O introduced.                                                                                                                                                                                                                                                                                                           | PASS                        |
+| III. Stdout Is Sacred             | All progress output (animated or plain-fallback) goes exclusively through stderr — either an indicatif `ProgressBar` explicitly targeting stderr, or direct `eprintln!`. Enforced by contract tests asserting stdout is byte-for-byte the transcript under every progress-reporting mode (interactive, non-interactive, suppressed). | PASS                        |
+| IV. Fail Loud, Fail Fast          | Unaffected for all existing correctness-relevant failure paths. Progress-display failures specifically (e.g., unwritable stderr) are deliberately swallowed (FR-012) — justified above under Constraints as a different category (best-effort UX, not correctness), matching existing precedent (CoreML notice, download bar).       | PASS — see Constraints note |
+| V. No Fabricated Data             | Every indicatif/console behavioral claim in this plan (default hiding behavior, `is_dumb()`'s exact semantics, `eta()`'s computation) was verified directly against the real vendored crate source, not assumed from training-data familiarity (research.md).                                                                        | PASS                        |
+| VI. Apple Silicon First-Class     | No execution-provider or platform-specific behavior introduced.                                                                                                                                                                                                                                                                      | PASS / N/A                  |
+| VII. Minimal Runtime Dependencies | `console` promoted from transitive to direct at its already-pinned version — no new dependency-tree entries, no new crate to trust.                                                                                                                                                                                                  | PASS                        |
+| VIII. Composability Over Features | `--no-progress` directly serves pipeline/automation use, following the existing `--list-models`/`--refresh-model` flag pattern; no server/GUI/plugin surface added.                                                                                                                                                                  | PASS                        |
+| Engineering Standards             | New fallible operations (writing progress output) must not panic and must have their failure-tolerance behavior tested; contract tests extend the existing suite rather than introducing new test infrastructure.                                                                                                                    | PASS                        |
 
 No violations requiring justification — Complexity Tracking is intentionally empty.
 

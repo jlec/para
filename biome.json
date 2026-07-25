@@ -25,6 +25,7 @@
       "**/*.ts",
       "**/*.tsx",
       "!**/*.min.js",
+      "!**/.mypy_cache",
       "!**/.venv",
       "!**/build",
       "!**/coverage",

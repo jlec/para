@@ -54,16 +54,16 @@ para -i audio.mp3 --refresh-model
 
 ### Flags
 
-| Flag                             | Default | Notes                                                                        |
-| -------------------------------- | ------- | ----------------------------------------------------------------------------- |
-| `-i, --input <PATH>`             | stdin   | Omit and pipe bytes in instead                                               |
-| `-o, --output <PATH>`            | stdout  |                                                                               |
-| `-m, --model <ID>`               | `parakeet-tdt-0.6b-v3` | See Models below                                              |
-| `-f, --format <text\|json\|srt>` | `text`  |                                                                               |
-| `--device <auto\|coreml\|cpu>`   | `auto`  | `auto`/`coreml` use the Apple Neural Engine; `cpu` forces CPU-only inference (useful for benchmarking/troubleshooting) |
-| `--list-models`                  | —       | Prints every model, its cache state, and the default; exits without transcribing |
-| `--refresh-model`                | —       | Deletes and re-downloads the selected model's cached files                  |
-| `--no-progress`                  | off     | Suppresses all progress output on stderr; errors are unaffected             |
+| Flag                             | Default                | Notes                                                                                                                  |
+| -------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `-i, --input <PATH>`             | stdin                  | Omit and pipe bytes in instead                                                                                         |
+| `-o, --output <PATH>`            | stdout                 |                                                                                                                        |
+| `-m, --model <ID>`               | `parakeet-tdt-0.6b-v3` | See Models below                                                                                                       |
+| `-f, --format <text\|json\|srt>` | `text`                 |                                                                                                                        |
+| `--device <auto\|coreml\|cpu>`   | `auto`                 | `auto`/`coreml` use the Apple Neural Engine; `cpu` forces CPU-only inference (useful for benchmarking/troubleshooting) |
+| `--list-models`                  | —                      | Prints every model, its cache state, and the default; exits without transcribing                                       |
+| `--refresh-model`                | —                      | Deletes and re-downloads the selected model's cached files                                                             |
+| `--no-progress`                  | off                    | Suppresses all progress output on stderr; errors are unaffected                                                        |
 
 Environment variable overrides (used when the matching flag isn't passed): `PARA_MODEL`,
 `PARA_FORMAT`, `PARA_DEVICE`. `PARA_NO_PROGRESS` (any non-empty value) has the same effect as
@@ -74,10 +74,10 @@ which always re-fetches afterward.
 
 ### Models
 
-| ID                    | Language                              | When to use it                                      |
-| ---------------------- | -------------------------------------- | ---------------------------------------------------- |
-| `parakeet-tdt-0.6b-v3` | 25 European languages, auto-detected   | Default — best accuracy, broadest language coverage |
-| `parakeet-tdt-0.6b-v2` | English only                           | Same accuracy tier as v3, kept for compatibility     |
+| ID                     | Language                             | When to use it                                      |
+| ---------------------- | ------------------------------------ | --------------------------------------------------- |
+| `parakeet-tdt-0.6b-v3` | 25 European languages, auto-detected | Default — best accuracy, broadest language coverage |
+| `parakeet-tdt-0.6b-v2` | English only                         | Same accuracy tier as v3, kept for compatibility    |
 
 Both models produce phrase/paragraph-level timestamps.
 

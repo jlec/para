@@ -256,7 +256,7 @@ clear error they need to act on).
 immediately-ish, not after an indefinite hang.
 
 **Correction, 2026-07-13 — cache-state checksum re-verification was a real performance bug**:
-`cache_state_in` (T011) originally re-hashed every file with a known checksum on *every* call, not
+`cache_state_in` (T011) originally re-hashed every file with a known checksum on _every_ call, not
 just after a download. This went unnoticed through the whole Foundational phase because every
 registry entry's `sha256` was still `None` until T010's real checksums landed (§3's addendum) — a
 `None` checksum skips the hash check entirely, so the cost never showed up until all three models
@@ -403,7 +403,7 @@ the repo's own pre-existing `forbid-binary` pre-commit policy (only one prior ca
 for `docs/images/`), which is a deliberate constraint, not an oversight — reverted rather than
 carved out a second exception for it.
 
-**Decision**: `build.rs` downloads the same `onnx-asr` PyPI wheel at *build* time (not runtime),
+**Decision**: `build.rs` downloads the same `onnx-asr` PyPI wheel at _build_ time (not runtime),
 verifies the wheel's SHA-256 and each extracted file's SHA-256 against the same real values
 recorded above, writes `nemo128.onnx`/`nemo80.onnx` into `OUT_DIR`, and `src/inference/mel.rs`
 embeds them from there via `include_bytes!(concat!(env!("OUT_DIR"), "/nemo128.onnx"))`. This keeps
@@ -420,7 +420,7 @@ constants directly in `build.rs`, next to the values it actually checks against.
 
 **Alternatives reconsidered**: Keep vendoring and add a `forbid-binary` exclusion for these two
 files — rejected on reflection; a project-wide "no binaries" policy is exactly the kind of
-constraint that shouldn't grow silent exceptions for convenience. Download at first *use* (runtime)
+constraint that shouldn't grow silent exceptions for convenience. Download at first _use_ (runtime)
 via the model manager's existing download/cache machinery — viable, but build-time is strictly
 better here: it guarantees the files exist before the binary can even be produced (no first-run
 network dependency at all, not even a one-time one), and avoids adding these two files to the
@@ -432,7 +432,7 @@ them out of.
 (one per line, line number = token id)" — downloading the real file
 (`istupakov/parakeet-tdt-0.6b-v3-onnx/vocab.txt`, 8193 lines) shows each line is actually
 `<piece> <id>` (space-separated, trailing numeric id), not a bare piece. The id happens to equal
-the 0-based line number for all 8193 lines (verified directly, no mismatches), so the *decoding*
+the 0-based line number for all 8193 lines (verified directly, no mismatches), so the _decoding_
 logic §10 described (look up by id, join, `▁`→space) is still correct — but loading code that
 naively treated the whole line as the piece would embed a trailing `" <n>"` in every piece. Also
 worth recording: the file includes non-speech control tokens (`<unk>`, `<pad>`, per-language
@@ -472,7 +472,7 @@ from a new `#[ignore]`d test exercising `encode_chunked` against the real downlo
 hung indefinitely rather than returning `Err`. `sample`(1) against the stuck process's stack showed
 the real cause: `ort::load_dylib_from_path` fails to find the library, and constructing the
 resulting `ort::error::Error` recursively calls back into `ort::api()`, which tries to acquire the
-*same* `OnceLock` that is still in the middle of being initialized by the outer call — a genuine
+_same_ `OnceLock` that is still in the middle of being initialized by the outer call — a genuine
 self-deadlock inside `ort` 2.0.0-rc.12 itself (confirmed via the actual stack trace, not
 speculation), not a bug in this codebase. This matters beyond just this project: Constitution
 Principle IV ("fail loud, fail fast") would have been silently violated by a missing dylib turning
@@ -482,7 +482,7 @@ into a silent hang instead of a clear startup error, if `load-dynamic` had been 
 `disable-linking`, `ort-sys`'s build script runs its full path: it downloads a real, checksum-verified
 prebuilt ONNX Runtime archive into the OS cache directory
 (`~/Library/Caches/ort.pyke.io/dfbin/<target>/<hash>/`, confirmed to contain a genuine
-`libonnxruntime.a`, ~81MB) at *build* time and links it in **statically**
+`libonnxruntime.a`, ~81MB) at _build_ time and links it in **statically**
 (`cargo:rustc-link-lib=static=onnxruntime`) — verified by re-running the same `#[ignore]`d test,
 which now loads the preprocessor, loads the real encoder, and runs `encode_chunked` successfully in
 under 3 seconds. This is a strictly better outcome than §2's original decision, not just a bug
@@ -544,7 +544,7 @@ heuristic (`group_into_segments`): split into a new segment wherever the gap bet
 consecutive emitted tokens' encoder frames exceeds `SEGMENT_GAP_SECONDS = 1.5s`. Verified against a
 real 2-second embedded silence (`say`'s `[[slnc 2000]]`) — correctly splits into two segments with
 contiguous, non-overlapping boundaries. A shorter, more typical inter-word gap (tested with `say`'s
-own natural pacing between sentences, no explicit silence command) did *not* reliably trigger a
+own natural pacing between sentences, no explicit silence command) did _not_ reliably trigger a
 split, meaning multi-sentence audio without an unusually long pause currently comes back as one
 segment — acceptable per data-model.md's "phrase/sentence... not word-level" wording (still
 ordered/non-overlapping/`end > start`), but a real limitation to note: this heuristic doesn't use
@@ -585,7 +585,7 @@ against the real downloaded `encoder-model.onnx` (which uses external-data stora
 ONNX Runtime CoreML-EP bug interacting with external-data models under dynamic-shape partitioning
 (confirmed via the verbose log: the crash follows CoreML successfully partitioning 888/2115 nodes
 and writing a `0_dynamic_nn` cached model, then failing while placing an initializer). Trying
-`ModelFormat::MLProgram` made it worse — a *different* crash, this time in the small in-memory
+`ModelFormat::MLProgram` made it worse — a _different_ crash, this time in the small in-memory
 preprocessor graph (`HandleNegativeAxis` out of range). `CoreML::with_static_input_shapes(true)`
 resolved it: CoreML then only claims nodes with fully static shapes, producing 24 real, stable
 `.mlmodelc` partitions for the encoder with no crash, correct transcription output, and (per
@@ -601,7 +601,7 @@ Runtime ships a fix for the external-data + dynamic-partition crash, since remov
 ## 14. CoreML compiled-model caching (fixes the user-reported repeated-compile issue)
 
 **Decision**: `ort`'s `CoreML::with_model_cache_dir(path)` persists the compiled `.mlmodelc`
-artifacts across process runs — per `ort`'s own doc comment, *without* it "the model will be
+artifacts across process runs — per `ort`'s own doc comment, _without_ it "the model will be
 compiled and saved to disk on each instantiation of a session." Wired to
 `<cache-root>/coreml-cache` (sharing `--cache-dir`/`PARA_CACHE_DIR`'s root so one flag relocates
 everything `para` persists), created via `fs::create_dir_all` before use. Verified directly: a
@@ -621,8 +621,8 @@ run regardless of a warm cache. This is exactly the same category of bug as §13
 in the message text rather than the EP selection.
 
 **Decision**: Added `coreml_cache_has_content` — checks whether `<cache-root>/coreml-cache` has any
-entries at all before printing the notice. Coarse (it doesn't verify the *specific* model needed is
-cached, just that *something* has been compiled before) but accurate in practice for this single-
+entries at all before printing the notice. Coarse (it doesn't verify the _specific_ model needed is
+cached, just that _something_ has been compiled before) but accurate in practice for this single-
 user local-cache design: after the first successful run, every session `para` ever builds has
 already been compiled and cached, so any content at all means later runs won't need to recompile.
 Verified against the user's exact repro command: run 1 shows the notice, runs 2 and 3 do not.
@@ -663,17 +663,17 @@ problems surfaced, in order:
    are mutually exclusive within one session build, not just independently cacheable. (This became
    moot once CoreML was dropped from the default path, above — the two caches no longer need to
    coexist for `Auto`/`Cpu`.)
-2. **The optimized-graph cache was measured to be *slower*, not faster, even with CoreML out of the
+2. **The optimized-graph cache was measured to be _slower_, not faster, even with CoreML out of the
    picture entirely.** Loading the pre-optimized file with optimization disabled took ~1.7-2.7s for
    the encoder session — worse than the ~1.4s baseline of just re-optimizing the original file fresh
    every time. Confirmed across repeated runs, not a one-off. The dominant per-load cost for this
-   model evidently isn't the optimization *passes* themselves (constant folding, fusions, etc.) but
+   model evidently isn't the optimization _passes_ themselves (constant folding, fusions, etc.) but
    something else in ORT's session construction — most likely reading and index-building the 2.4GB
    external-data tensor set, which happens regardless of whether the graph structure is
    pre-optimized. (A real, separate correctness issue was found and fixed along the way while
    testing this: the serialized optimized model doesn't embed external-data tensors, so loading it
    from a different directory than the original file needs the `.onnx.data` sidecar file
-   *hard-linked* — not symlinked — into the same directory; a symlink gets its real path resolved
+   _hard-linked_ — not symlinked — into the same directory; a symlink gets its real path resolved
    and rejected by ORT's path-containment check as escaping the model directory. Moot now that this
    approach itself is reverted, but recorded here in case optimized-graph caching is revisited.)
 
@@ -740,12 +740,12 @@ are unaffected — the state is created once and used once either way.
 sentences ("Sentence number N of the test.") — long enough to require exactly 2 chunks split at the
 300s threshold, with the boundary landing inside sentence ~110, and a phrasing designed to make any
 boundary corruption obvious. Ran it through both the pre-fix and post-fix decoder (via `git stash` to
-get a true before/after on the *same* binary otherwise, not just an isolated after-only read) and
+get a true before/after on the _same_ binary otherwise, not just an isolated after-only read) and
 diffed the two transcripts word-for-word rather than trusting a single read of the "after" output —
 this caught an initial wrong attribution (see below).
 
 Both transcripts share one identical error unrelated to chunking: "Sentence number 111" is
-transcribed as "Sentence number 11" in *both* the pre-fix and post-fix runs — a genuine numeral
+transcribed as "Sentence number 11" in _both_ the pre-fix and post-fix runs — a genuine numeral
 mis-recognition (acoustically ambiguous regardless of decoder state), not a boundary artifact, and
 this change correctly leaves it untouched. The real, measured difference between the two runs is a
 spurious duplicated word: the pre-fix transcript has an extra hallucinated "Test." inserted between
@@ -754,8 +754,8 @@ post-fix transcript. That duplication sits in the same boundary-adjacent region 
 is gone once decoder state carries across the boundary — a real, verified, if narrow, improvement.
 
 **Caveat — not a complete fix**: This change addresses only half of what a chunk boundary can
-disrupt. The *decoder's* autoregressive state now persists correctly across the split (confirmed
-above: it removed one real duplicated-word artifact), but the *encoder* still runs each chunk's audio
+disrupt. The _decoder's_ autoregressive state now persists correctly across the split (confirmed
+above: it removed one real duplicated-word artifact), but the _encoder_ still runs each chunk's audio
 independently with no acoustic context from the adjacent chunk (no audio-level overlap was added), and
 the surviving numeral error shows some boundary-adjacent inaccuracy can remain regardless. A complete
 fix would additionally overlap a few seconds of audio between chunks and de-duplicate/merge the
@@ -766,18 +766,18 @@ recording surfaces a boundary artifact worse than what remains here.
 
 ## Summary of changes from the prior technical spec
 
-| Area                                                                 | Prior spec                                                                                      | Resolved here                                                                                                                                                                                                                                               | Why                                                                                                                                                                                  |
-| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Area                                                                 | Prior spec                                                                                      | Resolved here                                                                                                                                                                                                                                                     | Why                                                                                                                                                                                        |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | ORT linking                                                          | `download-binaries` + `copy-dylibs` implied near-single-binary                                  | `download-binaries` alone: real static linking, single-binary output, no dylib to ship — corrected again after `load-dynamic` (an intermediate decision) turned out to silently disable the build-time fetch and hang instead of erroring when run for real (§11) | `copy-dylibs` is a dev-convenience for `cargo run`, not a distribution strategy; §2's `load-dynamic` follow-up was never actually run until T017, which is when its real behavior surfaced |
-| `ort` API code samples                                               | 1.x-style `Environment`/`ExecutionProvider::CoreML(...)`                                        | Re-derive from docs.rs for the pinned version at implementation time                                                                                                                                                                                        | Prior sample is 1.x API; 2.x has moved the execution-provider module at least once across RCs                                                                                        |
-| `tokenizers` features                                                | `default-features = false, features = ["onig"]`                                                 | Full defaults kept (`onig` included) — corrected mid-implementation after finding `onig` is actually a _default_ feature of this crate, not opt-in as first assumed; dropping it is deferred until the real tokenizer.json's pretokenizer type is inspected | Avoid repeating an unverified claim in the opposite direction (§4)                                                                                                                   |
-| Model management scope                                               | Implicit only in the narrative goals                                                            | Listing + `--refresh-model` explicitly in scope; standalone remove explicitly out of scope                                                                                                                                                                  | Matches spec.md clarification session, not assumed                                                                                                                                   |
-| Registry size                                                        | 4 models (`tdt-v3`, `tdt-v2`, `ctc-0.6b`, `ctc-1.1b`)                                           | 3 models — `tdt-v3`, `tdt-v2`, `ctc-0.6b`; drops the invented `ctc-1.1b`                                                                                                                                                                                    | `ctc-1.1b` doesn't exist on `istupakov`'s HuggingFace profile (verified directly); `tdt-v2` does, so it's kept rather than replaced with a second nonexistent CTC model (§3)         |
-| Download failure behavior                                            | Single generic "download failed" error, no retry described                                      | Bounded retries (3, exponential backoff) then loud failure, never a silent model fallback                                                                                                                                                                   | Matches spec.md FR-022 clarification                                                                                                                                                 |
-| Progress reporting                                                   | Progress bar (`indicatif`) implied for all downloads; no mention of transcription-time progress | Download progress via `indicatif` (stderr) unchanged; added explicit per-chunk `"transcribing chunk N of M"` stderr output for inputs requiring chunked encoding, none required for single-pass inputs                                                      | Matches spec.md FR-023 clarification, which the prior spec predates                                                                                                                  |
-| Mel spectrogram parameters, tensor names, checksums, chunk threshold | Presented as settled implementation detail                                                      | Explicitly deferred to implementation-time verification                                                                                                                                                                                                     | Constitution Principle V — must be verified against real sources, not asserted at plan time                                                                                          |
-| Mel extraction & tokenizer approach                                  | Hand-rolled `rustfft` DSP + `tokenizers` crate w/ `tokenizer.json`                              | Run the model's own bundled preprocessor `.onnx` graph via `ort`; decode via plain `vocab.txt` lookup, no crate                                                                                                                                             | Neither `tokenizer.json` nor a DSP-verification burden actually exists once the real model files were checked (§10) — `rustfft`, `ndarray`, `tokenizers` all removed from Cargo.toml |
-| Preprocessor graph sourcing                                          | (not addressed in prior draft)                                                                  | `build.rs` downloads + checksum-verifies the `onnx-asr` PyPI wheel at build time, embeds via `include_bytes!` from `OUT_DIR` — not committed to git                                                                                                          | Repo's `forbid-binary` policy rules out vendoring the files directly (§10 addendum, 2026-07-11)                                                                                      |
-| TDT/CTC decode algorithm and segment grouping                        | Presented as settled implementation detail, no segment-grouping strategy specified              | Ported directly from the real `onnx-asr` Python source; segment grouping is a new, project-owned silence-gap heuristic since the reference library has no concept of segments at all             | §12 — Constitution Principle V; verified end-to-end against real speech, not just structurally                                                                                       |
-| ORT linking (final)                                                  | (see earlier row)                                                                                | `download-binaries` alone — real static linking, no dylib, no `load-dynamic` reentrant-deadlock landmine                                                                                                                                                   | §11 — the `load-dynamic` intermediate decision was never actually run until T017                                                                                                     |
-| CoreML default execution provider (Constitution VI, final)          | Presented as settled: CoreML MUST be the non-opt-in `Auto` default                              | `Auto`/`Cpu` both run on CPU; CoreML kept only as explicit `--device coreml` opt-in                                                                                                                                                                        | §15 — measured zero speedup over CPU for this model family plus a real ORT crash workaround; constitution amended to v2.0.0 rather than silently violated                          |
+| `ort` API code samples                                               | 1.x-style `Environment`/`ExecutionProvider::CoreML(...)`                                        | Re-derive from docs.rs for the pinned version at implementation time                                                                                                                                                                                              | Prior sample is 1.x API; 2.x has moved the execution-provider module at least once across RCs                                                                                              |
+| `tokenizers` features                                                | `default-features = false, features = ["onig"]`                                                 | Full defaults kept (`onig` included) — corrected mid-implementation after finding `onig` is actually a _default_ feature of this crate, not opt-in as first assumed; dropping it is deferred until the real tokenizer.json's pretokenizer type is inspected       | Avoid repeating an unverified claim in the opposite direction (§4)                                                                                                                         |
+| Model management scope                                               | Implicit only in the narrative goals                                                            | Listing + `--refresh-model` explicitly in scope; standalone remove explicitly out of scope                                                                                                                                                                        | Matches spec.md clarification session, not assumed                                                                                                                                         |
+| Registry size                                                        | 4 models (`tdt-v3`, `tdt-v2`, `ctc-0.6b`, `ctc-1.1b`)                                           | 3 models — `tdt-v3`, `tdt-v2`, `ctc-0.6b`; drops the invented `ctc-1.1b`                                                                                                                                                                                          | `ctc-1.1b` doesn't exist on `istupakov`'s HuggingFace profile (verified directly); `tdt-v2` does, so it's kept rather than replaced with a second nonexistent CTC model (§3)               |
+| Download failure behavior                                            | Single generic "download failed" error, no retry described                                      | Bounded retries (3, exponential backoff) then loud failure, never a silent model fallback                                                                                                                                                                         | Matches spec.md FR-022 clarification                                                                                                                                                       |
+| Progress reporting                                                   | Progress bar (`indicatif`) implied for all downloads; no mention of transcription-time progress | Download progress via `indicatif` (stderr) unchanged; added explicit per-chunk `"transcribing chunk N of M"` stderr output for inputs requiring chunked encoding, none required for single-pass inputs                                                            | Matches spec.md FR-023 clarification, which the prior spec predates                                                                                                                        |
+| Mel spectrogram parameters, tensor names, checksums, chunk threshold | Presented as settled implementation detail                                                      | Explicitly deferred to implementation-time verification                                                                                                                                                                                                           | Constitution Principle V — must be verified against real sources, not asserted at plan time                                                                                                |
+| Mel extraction & tokenizer approach                                  | Hand-rolled `rustfft` DSP + `tokenizers` crate w/ `tokenizer.json`                              | Run the model's own bundled preprocessor `.onnx` graph via `ort`; decode via plain `vocab.txt` lookup, no crate                                                                                                                                                   | Neither `tokenizer.json` nor a DSP-verification burden actually exists once the real model files were checked (§10) — `rustfft`, `ndarray`, `tokenizers` all removed from Cargo.toml       |
+| Preprocessor graph sourcing                                          | (not addressed in prior draft)                                                                  | `build.rs` downloads + checksum-verifies the `onnx-asr` PyPI wheel at build time, embeds via `include_bytes!` from `OUT_DIR` — not committed to git                                                                                                               | Repo's `forbid-binary` policy rules out vendoring the files directly (§10 addendum, 2026-07-11)                                                                                            |
+| TDT/CTC decode algorithm and segment grouping                        | Presented as settled implementation detail, no segment-grouping strategy specified              | Ported directly from the real `onnx-asr` Python source; segment grouping is a new, project-owned silence-gap heuristic since the reference library has no concept of segments at all                                                                              | §12 — Constitution Principle V; verified end-to-end against real speech, not just structurally                                                                                             |
+| ORT linking (final)                                                  | (see earlier row)                                                                               | `download-binaries` alone — real static linking, no dylib, no `load-dynamic` reentrant-deadlock landmine                                                                                                                                                          | §11 — the `load-dynamic` intermediate decision was never actually run until T017                                                                                                           |
+| CoreML default execution provider (Constitution VI, final)           | Presented as settled: CoreML MUST be the non-opt-in `Auto` default                              | `Auto`/`Cpu` both run on CPU; CoreML kept only as explicit `--device coreml` opt-in                                                                                                                                                                               | §15 — measured zero speedup over CPU for this model family plus a real ORT crash workaround; constitution amended to v2.0.0 rather than silently violated                                  |

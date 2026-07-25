@@ -60,13 +60,13 @@ One file belonging to a `ModelOption`'s cache directory: an encoder graph and a 
 every model, plus a decoder-joint graph for TDT-kind models (CTC-kind models decode directly from
 the encoder's output — research.md §3).
 
-| Field        | Type                                        | Notes                                                                                                                              |
-| ------------ | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Field        | Type                                        | Notes                                                                                                                                                                                                                                                            |
+| ------------ | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`       | `String`                                    | Filename on disk, e.g. `encoder-model.onnx`, `decoder_joint-model.onnx` (TDT only), `vocab.txt` — each `vocab.txt` line is `<piece> <id>` (id == 0-based line number; verified against the real file, research.md §10's 2026-07-11 correction), not a bare piece |
-| `role`       | enum `Encoder` \| `DecoderJoint` \| `Vocab` | Which stage of the pipeline this file feeds (`Vocab` is read directly, not run as a session)                                       |
-| `source_url` | `String`                                    | Resolved download URL (HuggingFace `resolve/main/<filename>` pattern)                                                              |
-| `sha256`     | `String`                                    | **Computed from the real downloaded file at implementation time** — never a placeholder (Constitution Principle V; research.md §3) |
-| `size_bytes` | `u64`                                       | For progress-bar totals                                                                                                            |
+| `role`       | enum `Encoder` \| `DecoderJoint` \| `Vocab` | Which stage of the pipeline this file feeds (`Vocab` is read directly, not run as a session)                                                                                                                                                                     |
+| `source_url` | `String`                                    | Resolved download URL (HuggingFace `resolve/main/<filename>` pattern)                                                                                                                                                                                            |
+| `sha256`     | `String`                                    | **Computed from the real downloaded file at implementation time** — never a placeholder (Constitution Principle V; research.md §3)                                                                                                                               |
+| `size_bytes` | `u64`                                       | For progress-bar totals                                                                                                                                                                                                                                          |
 
 **Note — the preprocessor is not a `ModelFile`**: mel-spectrogram feature extraction runs through
 one of two small, shared ONNX graphs (`nemo128.onnx` for TDT models, `nemo80.onnx` for CTC —

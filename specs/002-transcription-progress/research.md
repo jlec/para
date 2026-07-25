@@ -31,11 +31,12 @@ codes into a redirected file) but it's silence, not the plain milestone lines FR
 
 **Decision**: Do not rely on indicatif's automatic hiding. Implement an explicit
 `is_interactive() -> bool` check (finding 3) at the point progress reporting begins, and branch:
+
 - Interactive: build a real, animated `indicatif::ProgressBar` targeting stderr.
 - Non-interactive: skip indicatif entirely; emit plain `eprintln!` milestone lines directly — the
   same mechanism `src/inference/engine.rs`'s `encode_chunked`/`encode_chunked_ctc` already use
   unconditionally today for `"transcribing chunk N of M"` (spec 001, FR-023). That existing line
-  already *is* a valid non-interactive milestone and needs no new mechanism, only extending to the
+  already _is_ a valid non-interactive milestone and needs no new mechanism, only extending to the
   other phases (model loading, stdin reading) this feature adds.
 
 ## 2. `console::is_dumb()`'s Unix default is easy to get wrong by hand
@@ -127,7 +128,7 @@ Verified directly against the current source (`src/inference/engine.rs`, `src/au
   transcription begins for both `-i` and staged-stdin input alike — confirming the UX consult's
   central finding (spec.md's Context section) that both input methods converge on identical,
   known-duration progress-reporting behavior once staging completes. No new duration-probing logic
-  is needed; this feature only needs to *consume* the value that already exists.
+  is needed; this feature only needs to _consume_ the value that already exists.
 - **Correction (found during implementation)**: this section originally claimed stdin staging
   (`audio.rs`'s temp-file writer) "reads in a loop already" — checked against the real code, it was
   actually a single `read_to_end` call with no loop at all. Rewritten as an explicit 64KB-chunked
@@ -140,10 +141,10 @@ Verified directly against the current source (`src/inference/engine.rs`, `src/au
 
 ## Summary of decisions
 
-| Question | Decision |
-|---|---|
-| Non-interactive fallback | Explicit manual branch, not indicatif's auto-hide; plain `eprintln!`, extending the existing FR-023 pattern |
-| Terminal/dumb detection | Reuse `console::Term::stderr().is_term()` + `console::is_dumb()` directly (already a transitive dependency, promoted to direct) |
-| ETA computation | indicatif's built-in `eta()`/`{eta}` — real measured-rate estimator, no hand-rolled math |
-| Progress unit | Audio-milliseconds as `u64`, converted from the existing `f64` `duration_secs` |
-| New dependency footprint | `console` promoted from transitive to direct at its already-pinned version — zero new dependency-tree entries |
+| Question                 | Decision                                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Non-interactive fallback | Explicit manual branch, not indicatif's auto-hide; plain `eprintln!`, extending the existing FR-023 pattern                     |
+| Terminal/dumb detection  | Reuse `console::Term::stderr().is_term()` + `console::is_dumb()` directly (already a transitive dependency, promoted to direct) |
+| ETA computation          | indicatif's built-in `eta()`/`{eta}` — real measured-rate estimator, no hand-rolled math                                        |
+| Progress unit            | Audio-milliseconds as `u64`, converted from the existing `f64` `duration_secs`                                                  |
+| New dependency footprint | `console` promoted from transitive to direct at its already-pinned version — zero new dependency-tree entries                   |

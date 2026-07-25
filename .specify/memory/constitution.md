@@ -112,7 +112,7 @@ unusable while its conversion doesn't yet exist.
 
 **Rationale**: Apple Silicon is a primary deployment target, not a secondary
 optimization. A prior amendment (2.0.0) made CPU the default after finding
-ONNX Runtime's CoreML *execution provider* produced no measurable speedup
+ONNX Runtime's CoreML _execution provider_ produced no measurable speedup
 for the NVIDIA Parakeet family (research.md §15) — but that measurement was
 about a general-purpose ONNX Runtime session with some compute delegated to
 CoreML, not genuine native CoreML inference. Direct investigation

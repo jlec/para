@@ -35,7 +35,7 @@ cat progress.log
 
 Expected: `progress.log` contains only plain, newline-terminated text — no animation/cursor-control
 escape sequences, readable in a normal text editor. Also try with `TERM=dumb` in front of the
-command while stderr *is* attached to a real terminal, and confirm the same plain-text behavior
+command while stderr _is_ attached to a real terminal, and confirm the same plain-text behavior
 (research.md §2 — an unset or `dumb` `TERM` is treated the same as a non-terminal).
 
 ## US4 — Suppressing progress entirely
