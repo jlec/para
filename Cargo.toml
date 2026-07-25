@@ -1,6 +1,6 @@
 [package]
 name = "para"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Parakeet STT cli"
 repository = "https://github.com/jlec/para"
