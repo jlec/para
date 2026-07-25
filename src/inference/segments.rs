@@ -6,6 +6,7 @@
 //! (004-native-coreml-backend spec.md FR-006/FR-007).
 
 use crate::inference::Segment;
+use crate::inference::numbers::normalize_numbers;
 use crate::inference::swift_bridge::WordTiming;
 
 /// Silence gap (seconds) between two consecutive words' timestamps past
@@ -57,11 +58,8 @@ fn finish_segment(words: &[&WordTiming]) -> Option<Segment> {
     }
     let start = non_filler.first().unwrap().start_secs;
     let end = non_filler.last().unwrap().end_secs;
-    let text = non_filler
-        .iter()
-        .map(|w| w.word.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
+    let word_strs: Vec<&str> = non_filler.iter().map(|w| w.word.as_str()).collect();
+    let text = normalize_numbers(&word_strs).join(" ");
     Some(Segment { start, end, text })
 }
 

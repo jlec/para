@@ -59,8 +59,9 @@ fixed); `cargo tree` confirms `ort`/`reqwest`/`sha2`/`zip`/`thiserror`/`dirs` ar
 - [X] T019 SRT/JSON output verified against `test.wav`: real per-segment timestamps, correctly formatted, structurally unaffected by the filler/paragraph changes (FR-009)
 - [X] T020 `--list-models` verified against the real bridge: correctly reports `Cached`/`NotCached` per model with no network access
 
+- [X] T021 Number/acronym normalization (FR-008) — implemented as a small rule-based grammar in `src/inference/numbers.rs`, wired into `segments.rs` after filler-word removal. Converts multi-word spoken cardinal-number phrases ("one hundred forty" → "140", "twenty one" → "21"), including the "hundred [and] tens/teens/ones" and "tens ones" shapes. Deliberately narrow: a bare single number word ("one", "twenty") is left as a word (avoids false positives like "the one thing"), and digit-sequence model/acronym codes read digit-by-digit (e.g. "four eighty" for "480", GPU model names like "A100") are explicitly out of scope — that pattern is ambiguous with ordinary cardinal speech and would require domain-specific guessing FR-008 says to avoid.
+
 **Not done in this pass** (documented, not silently skipped):
-- [ ] T021 Number/acronym normalization (FR-008) — deferred; FluidAudio's own output already renders numbers/acronyms reasonably (e.g. "500 GPUs", "A10040G") and the original letter-by-letter ONNX-era problem this was meant to fix appears substantially smaller with the new backend. Revisit only if a real gap is found in practice.
 - [ ] T022 A `--model parakeet-tdt-0.6b-v2` full long-recording memory/speed run (only `test.wav`, a few seconds of audio, was verified against v2 via the integration test suite) — the v3 default model is what the user's original complaint was about and what carries the numbers above; v2 uses the identical code path so the same result is expected but not independently re-measured on a long file.
 
 ---
