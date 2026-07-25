@@ -32,7 +32,7 @@ jobs:
           tar -czf para-macos-arm64.tar.gz -C target/release para
           shasum -a 256 para-macos-arm64.tar.gz | awk '{print $1}' > para-macos-arm64.sha256
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: para-macos-arm64.tar.gz
           fail_on_unmatched_files: true
