@@ -20,6 +20,9 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build release binary
@@ -38,14 +41,16 @@ jobs:
       - name: Bump Homebrew formula
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
+        run: |-
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           sha256="$(cat para-macos-arm64.sha256)"
           git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jlec/homebrew-tap.git" tap
           cd tap
           sed -i '' -E "s|version \"[^\"]*\"|version \"${version}\"|" Formula/para.rb
-          sed -i '' -E "s|download/v[^/]*/para-macos-arm64\.tar\.gz|download/v${version}/para-macos-arm64.tar.gz|" Formula/para.rb
+          sed -i '' -E \
+            "s|download/v[^/]*/para-macos-arm64\.tar\.gz|download/v${version}/para-macos-arm64.tar.gz|" \
+            Formula/para.rb
           sed -i '' -E "s|sha256 \"[^\"]*\"|sha256 \"${sha256}\"|" Formula/para.rb
           git config user.name "para-release-bot"
           git config user.email "actions@github.com"
