@@ -23,13 +23,13 @@ exclude: >
   )
 repos:
   - repo: https://github.com/commitizen-tools/commitizen
-    rev: "v4.16.5"
+    rev: "v4.18.0"
     hooks:
       - id: commitizen
         stages:
           - commit-msg
   - repo: https://github.com/biomejs/pre-commit
-    rev: v2.5.5
+    rev: v2.5.10
     hooks:
       - id: biome-check
       - id: biome-ci
@@ -102,16 +102,16 @@ repos:
       # - id: script-must-not-have-extension
       - id: shfmt
   - repo: https://github.com/tombi-toml/tombi-pre-commit
-    rev: "v1.2.4"
+    rev: "v1.4.1"
     hooks:
       - id: tombi-format
       - id: tombi-lint
   - repo: https://github.com/betterleaks/betterleaks
-    rev: "v1.7.0"
+    rev: "v1.8.1"
     hooks:
       - id: betterleaks
   - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: "0.37.4"
+    rev: "0.38.0"
     hooks:
       - id: check-github-workflows
   - repo: https://github.com/doublify/pre-commit-rust
@@ -127,11 +127,11 @@ repos:
       - id: cargo-deny
         args: ["check"]
   - repo: https://github.com/hadolint/hadolint
-    rev: v2.14.0
+    rev: v2.15.1
     hooks:
       - id: hadolint-docker
   - repo: https://github.com/gitguardian/ggshield
-    rev: "v1.52.2"
+    rev: "v1.54.0"
     hooks:
       - id: ggshield
         stages: ["pre-push"]
