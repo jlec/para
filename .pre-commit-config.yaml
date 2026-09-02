@@ -119,8 +119,10 @@ repos:
     hooks:
       - id: fmt
       - id: cargo-check
+        stages: ["manual"]
       - id: clippy
         args: ["--", "-D", "warnings"]
+        stages: ["manual"]
   - repo: https://github.com/EmbarkStudios/cargo-deny
     rev: "0.20.2"
     hooks:

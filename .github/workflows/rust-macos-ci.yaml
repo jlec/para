@@ -6,14 +6,23 @@ on:
   # yamllint disable-line rule:empty-values
   workflow_dispatch:
 
-  # yamllint disable-line rule:empty-values
   pull_request:
+    paths: &rust-paths
+      - "src/**"
+      - "swift/**"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - "rust-toolchain.toml"
+      - ".github/workflows/rust-macos-ci.yaml"
 
   push:
     branches:
       - main
     tags-ignore:
       - "**"
+    paths: *rust-paths
 
 permissions: read-all
 
