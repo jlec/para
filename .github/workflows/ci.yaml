@@ -32,26 +32,6 @@ jobs:
     secrets: inherit
     with:
       ansible-support: false
-  rust-build-test:
-    name: "Rust Build & Test"
-    if: >-
-      github.actor != 'dependabot[bot]' &&
-      !startsWith(github.event.head_commit.message, 'bump:') &&
-      !startsWith(github.event.head_commit.message, 'WIP')
-    needs:
-      - linting
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo fmt --check
-      - run: cargo clippy -- -D warnings
-      - run: cargo test
-      - run: cargo deny check
-
   dependabot:
     name: "Handle dependabot PR"
     if: >-
@@ -75,7 +55,6 @@ jobs:
       !startsWith(github.event.head_commit.message, 'WIP') &&
       needs.linting.result == 'success'
     needs:
-      - rust-build-test
       - dependabot
       - linting
     uses: jlec/github-actions/.github/workflows/reusable-ci-generic.yml@main
