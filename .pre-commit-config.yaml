@@ -29,7 +29,7 @@ repos:
         stages:
           - commit-msg
   - repo: https://github.com/biomejs/pre-commit
-    rev: v2.5.10
+    rev: v2.5.11
     hooks:
       - id: biome-check
       - id: biome-ci
@@ -102,7 +102,7 @@ repos:
       # - id: script-must-not-have-extension
       - id: shfmt
   - repo: https://github.com/tombi-toml/tombi-pre-commit
-    rev: "v1.4.1"
+    rev: "v1.5.0"
     hooks:
       - id: tombi-format
       - id: tombi-lint
